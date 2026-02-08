@@ -56,6 +56,11 @@ app.get('/api/checkup/:ticker', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Missing or invalid ticker symbol' });
     }
 
+    // Validate ticker format (1-5 uppercase letters)
+    if (!/^[A-Z]{1,5}$/.test(ticker.toUpperCase())) {
+      return res.status(400).json({ error: 'Invalid ticker format. Must be 1-5 letters.' });
+    }
+
     console.log(`[CHECKUP] ${ticker} (noob: ${noobMode})`);
 
     const checkup = await generateStockCheckup(ticker);
@@ -137,6 +142,11 @@ app.get('/api/news/:ticker', async (req: Request, res: Response) => {
 
     if (!ticker || typeof ticker !== 'string') {
       return res.status(400).json({ error: 'Missing or invalid ticker symbol' });
+    }
+
+    // Validate ticker format (1-5 uppercase letters)
+    if (!/^[A-Z]{1,5}$/.test(ticker.toUpperCase())) {
+      return res.status(400).json({ error: 'Invalid ticker format. Must be 1-5 letters.' });
     }
 
     console.log(`[NEWS] ${ticker} (noob: ${noobMode})`);

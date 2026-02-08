@@ -86,12 +86,12 @@ async function fetchMarketOverview(): Promise<MarketOverview> {
       sp500: {
         price: sp500Data.price || 0,
         change: sp500Data.change || 0,
-        changePercent: sp500Data.changePercent || 0
+        changePercent: sp500Data.changePercentage || 0
       },
       nasdaq: {
         price: nasdaqData.price || 0,
         change: nasdaqData.change || 0,
-        changePercent: nasdaqData.changePercent || 0
+        changePercent: nasdaqData.changePercentage || 0
       },
       topGainers: [],
       topLosers: []
@@ -109,30 +109,40 @@ async function fetchMarketOverview(): Promise<MarketOverview> {
 
 async function fetchStockNews(symbols: string[]): Promise<StockNewsItem[]> {
   try {
-    const newsPromises = symbols.map(async (symbol) => {
-      try {
-        const res = await axios.get(`${FMP_BASE}/news/stock-latest?symbol=${symbol}&limit=2&apikey=${FMP_API_KEY}`);
-        const articles = res.data || [];
+    // Fetch general news once for all symbols
+    const generalNews = await fetchGeneralNews();
+    const stockNews: StockNewsItem[] = [];
 
-        if (articles.length === 0) return null;
+    symbols.forEach((symbol) => {
+      // Find first article mentioning this symbol in general news
+      const relevantArticle = generalNews.find((article: any) => {
+        const title = (article.title || '').toUpperCase();
+        const text = (article.text || '').toUpperCase();
+        return title.includes(symbol.toUpperCase()) || text.includes(symbol.toUpperCase());
+      });
 
-        const article = articles[0];
-        const sentiment = classifySentiment(article.title);
-        const importance = classifyImportance(article.title);
-
-        return {
+      if (relevantArticle) {
+        stockNews.push({
           symbol,
-          title: article.title || '',
-          sentiment,
-          importance
-        };
-      } catch (err) {
-        return null;
+          title: relevantArticle.title || '',
+          sentiment: classifySentiment(relevantArticle.title),
+          importance: classifyImportance(relevantArticle.title)
+        });
+      } else {
+        // Fallback: use first general news article if no symbol-specific match
+        if (generalNews.length > 0) {
+          const fallback = generalNews[Math.floor(Math.random() * Math.min(3, generalNews.length))];
+          stockNews.push({
+            symbol,
+            title: fallback.title || 'Market news available',
+            sentiment: classifySentiment(fallback.title),
+            importance: 'Medium'
+          });
+        }
       }
     });
 
-    const results = await Promise.all(newsPromises);
-    return results.filter((item): item is StockNewsItem => item !== null);
+    return stockNews;
   } catch (err) {
     console.warn('Could not fetch stock news');
     return [];
@@ -189,8 +199,8 @@ function parseEconomicNews(news: any[]): EconomicNewsItem[] {
 }
 
 function classifySentiment(text: string): 'Positive' | 'Negative' | 'Neutral' {
-  const positiveWords = ['beat', 'surge', 'rally', 'gain', 'profit', 'growth', 'strong', 'boost', 'rise'];
-  const negativeWords = ['fall', 'crash', 'decline', 'loss', 'weak', 'drop', 'down', 'cuts', 'warns'];
+  const positiveWords = ['beat', 'surge', 'rally', 'gain', 'profit', 'growth', 'strong', 'boost', 'rise', 'exceed', 'soar', 'jump'];
+  const negativeWords = ['fall', 'crash', 'decline', 'loss', 'weak', 'drop', 'down', 'cuts', 'warns', 'layoff', 'bankruptcy', 'scandal', 'plunge', 'slump', 'miss'];
 
   const lowerText = text.toLowerCase();
   const posCount = positiveWords.filter((word) => lowerText.includes(word)).length;

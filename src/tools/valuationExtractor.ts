@@ -23,13 +23,14 @@ export async function getValuation({ symbol }: { symbol: string }) {
     }
 
     const quote = quoteData[0];
-    const metrics = quoteData[0]; // Metrics often included in quote response
+    const metricsData = metricsRes.data;
+    const metrics = metricsData && metricsData.length > 0 ? metricsData[0] : {};
 
-    // Extract PE ratio
-    const peRatio = num(quote.pe) ?? num(quote.priceEarningsRatio) ?? null;
+    // Extract PE ratio - try multiple field names
+    const peRatio = num(quote.pe) ?? num(quote.priceEarningsRatio) ?? num(metrics.peRatio) ?? null;
 
-    // Extract EPS
-    const eps = num(quote.eps) ?? num(quote.earningsPerShare) ?? null;
+    // Extract EPS - try multiple field names
+    const eps = num(quote.eps) ?? num(quote.earningsPerShare) ?? num(metrics.epsPerShare) ?? null;
 
     // Extract market cap
     const marketCap = quote.marketCap ?? null;
@@ -37,7 +38,7 @@ export async function getValuation({ symbol }: { symbol: string }) {
     // Extract price change data
     const price = num(quote.price) ?? null;
     const change = num(quote.change) ?? null;
-    const changePercent = num(quote.changePercent) ?? null;
+    const changePercent = num(quote.changePercentage) ?? null;
     const dayHigh = num(quote.dayHigh) ?? null;
     const dayLow = num(quote.dayLow) ?? null;
     const yearHigh = num(quote.yearHigh) ?? null;
