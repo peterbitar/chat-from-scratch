@@ -13,12 +13,42 @@ export interface Headline {
 
 export async function getNewsSentiment({ symbol }: { symbol: string }): Promise<Headline[]> {
   try {
-    // Get real news from FMP Starter - NEW /stable/ endpoint
-    const response = await axios.get(
-      `${BASE}/news/stock-latest?symbol=${symbol.toUpperCase()}&limit=5&apikey=${FMP_API_KEY}`
-    );
+    // Try stock-specific endpoint first
+    let articles = [];
+    try {
+      const response = await axios.get(
+        `${BASE}/news/stock-latest?symbol=${symbol.toUpperCase()}&limit=10&apikey=${FMP_API_KEY}`
+      );
+      articles = (response.data || []).filter((article: any) => {
+        // Filter to only include articles that mention the symbol
+        const title = (article.title || '').toUpperCase();
+        const text = (article.text || '').toUpperCase();
+        return title.includes(symbol.toUpperCase()) || text.includes(symbol.toUpperCase());
+      });
+    } catch (err) {
+      console.warn(`Could not fetch stock-specific news for ${symbol}, using general news`);
+    }
 
-    const articles = response.data || [];
+    // If no symbol-specific articles, fall back to general news
+    if (articles.length === 0) {
+      try {
+        const generalRes = await axios.get(`${BASE}/news/general-latest?limit=15&apikey=${FMP_API_KEY}`);
+        const generalNews = generalRes.data || [];
+        // Try to find articles mentioning the symbol
+        articles = generalNews.filter((article: any) => {
+          const title = (article.title || '').toUpperCase();
+          const text = (article.text || '').toUpperCase();
+          return title.includes(symbol.toUpperCase()) || text.includes(symbol.toUpperCase());
+        });
+
+        // If still no match, use first few general articles
+        if (articles.length === 0) {
+          articles = generalNews.slice(0, 5);
+        }
+      } catch (err) {
+        console.warn(`Could not fetch general news for ${symbol}`);
+      }
+    }
 
     if (!Array.isArray(articles) || articles.length === 0) {
       return [{
@@ -28,12 +58,12 @@ export async function getNewsSentiment({ symbol }: { symbol: string }): Promise<
       }];
     }
 
-    // Use OpenAI to classify sentiment on real headlines
+    // Use OpenAI to classify sentiment on headlines
     const headlines = articles
       .slice(0, 5)
       .map((article: any) => ({
         title: article.title || '',
-        url: article.link || article.url || '',
+        url: article.link || article.url || article.website || '',
         originalSentiment: article.sentiment // FMP sometimes includes sentiment
       }))
       .filter((h: any) => h.title);
@@ -46,11 +76,11 @@ export async function getNewsSentiment({ symbol }: { symbol: string }): Promise<
       const titles = headlines.map((h: any) => h.title).join('\n');
 
       const completion = await openai.chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-4-mini',
         messages: [
           {
             role: 'system',
-            content: 'Classify each headline as Positive, Negative, or Neutral. Reply with only the sentiment for each headline, one per line.'
+            content: `Classify each headline as Positive, Negative, or Neutral in context of stock ${symbol}. Reply with only the sentiment for each headline, one per line.`
           },
           {
             role: 'user',
@@ -82,7 +112,7 @@ export async function getNewsSentiment({ symbol }: { symbol: string }): Promise<
     }));
   } catch (err: any) {
     return [{
-      title: `Error fetching news sentiment: ${err.message}`,
+      title: `No news available for ${symbol}`,
       url: '',
       sentiment: 'Neutral'
     }];
