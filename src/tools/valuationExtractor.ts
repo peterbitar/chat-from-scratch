@@ -1,53 +1,67 @@
 import axios from 'axios';
-import * as cheerio from 'cheerio';
 
-export interface ValuationData {
-  symbol: string;
-  price: number | null;
-  peRatio: number | null;
-  pegRatio: number | null;
-  epsTTM: number | null;
-  forwardPE: number | null;
-  marketCap: string | null;
-  source: string;
+const FMP_API_KEY = process.env.FMP_API_KEY;
+const BASE = 'https://financialmodelingprep.com/stable';
+
+function num(val: unknown): number | null {
+  if (val == null || val === '') return null;
+  const n = Number(val);
+  return Number.isFinite(n) ? n : null;
 }
 
-export async function getValuation(symbol: string): Promise<ValuationData> {
-  const url = `https://finance.yahoo.com/quote/${symbol}`;
+export async function getValuation({ symbol }: { symbol: string }) {
   try {
-    const { data: html } = await axios.get(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      timeout: 5000
-    });
+    // FMP Starter - NEW /stable/ endpoint (not deprecated v3/v4)
+    const [quoteRes, metricsRes] = await Promise.all([
+      axios.get(`${BASE}/quote?symbol=${symbol.toUpperCase()}&apikey=${FMP_API_KEY}`),
+      axios.get(`${BASE}/key-metrics?symbol=${symbol.toUpperCase()}&apikey=${FMP_API_KEY}`)
+    ]);
 
-    const $ = cheerio.load(html);
+    const quoteData = quoteRes.data;
+    if (!quoteData || quoteData.length === 0) {
+      return { symbol, error: 'No data returned from API.' };
+    }
 
-    const extract = (label: string) =>
-      $(`td:contains("${label}")`).next('td').text().trim() || null;
+    const quote = quoteData[0];
+    const metrics = quoteData[0]; // Metrics often included in quote response
 
-    const parse = (val: string | null) =>
-      val && val !== 'N/A' ? parseFloat(val.replace(/[,%$BMK]/g, '')) : null;
+    // Extract PE ratio
+    const peRatio = num(quote.pe) ?? num(quote.priceEarningsRatio) ?? null;
+
+    // Extract EPS
+    const eps = num(quote.eps) ?? num(quote.earningsPerShare) ?? null;
+
+    // Extract market cap
+    const marketCap = quote.marketCap ?? null;
+
+    // Extract price change data
+    const price = num(quote.price) ?? null;
+    const change = num(quote.change) ?? null;
+    const changePercent = num(quote.changePercent) ?? null;
+    const dayHigh = num(quote.dayHigh) ?? null;
+    const dayLow = num(quote.dayLow) ?? null;
+    const yearHigh = num(quote.yearHigh) ?? null;
+    const yearLow = num(quote.yearLow) ?? null;
 
     return {
       symbol,
-      price: parse($('fin-streamer[data-field="regularMarketPrice"]').first().text()),
-      peRatio: parse(extract('PE Ratio (TTM)')),
-      pegRatio: parse(extract('PEG Ratio (5 yr expected)')),
-      epsTTM: parse(extract('EPS (TTM)')),
-      forwardPE: parse(extract('Forward P/E')),
-      marketCap: extract('Market Cap'),
-      source: 'Yahoo Finance'
+      price,
+      change,
+      changePercent,
+      dayHigh,
+      dayLow,
+      yearHigh,
+      yearLow,
+      peRatio,
+      eps,
+      marketCap,
+      source: 'FMP Starter',
+      error: null
     };
-  } catch (err) {
+  } catch (err: any) {
     return {
       symbol,
-      price: null,
-      peRatio: null,
-      pegRatio: null,
-      epsTTM: null,
-      forwardPE: null,
-      marketCap: null,
-      source: 'Yahoo Finance'
+      error: `Valuation fetch failed: ${err.message}`
     };
   }
 }
