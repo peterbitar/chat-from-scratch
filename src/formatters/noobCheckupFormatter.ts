@@ -63,6 +63,18 @@ export function formatNoobCheckup(checkup: StockCheckup): string {
     out += `${v.explanation}\n\n`;
   }
 
+  // Vs S&P 500 (market comparison)
+  const sp500 = layers.sp500Comparison;
+  if (sp500?.summary && !sp500.summary.includes('Error')) {
+    out += `**Vs the market (S&P 500)**\n`;
+    out += `${sp500.summary}\n\n`;
+  } else if (sp500?.outperforming != null && sp500?.outperformanceAmount != null) {
+    out += `**Vs the market (S&P 500)**\n`;
+    out += sp500.outperforming
+      ? `This stock is beating the S&P 500 by ${Math.abs(sp500.outperformanceAmount).toFixed(1)}% so far this year.\n\n`
+      : `This stock is trailing the S&P 500 by ${Math.abs(sp500.outperformanceAmount).toFixed(1)}% so far this year.\n\n`;
+  }
+
   // Growth in plain English
   if (f?.epsGrowth != null || f?.revenueGrowth != null) {
     out += `**Growth**\n`;
@@ -81,7 +93,7 @@ export function formatNoobCheckup(checkup: StockCheckup): string {
   // So... what now?
   if (d?.recommendations?.length) {
     out += `**So… what now?**\n`;
-    d.recommendations.slice(0, 4).forEach((rec: string) => {
+    d.recommendations.slice(0, 6).forEach((rec: string) => {
       out += `→ ${simplifyText(rec, 'noob')}\n`;
     });
     out += '\n';

@@ -10,6 +10,7 @@ export function formatStockCheckup(checkup: StockCheckup): string {
   const exp = layers.expectations;
   const risk = layers.riskRadar;
   const news = layers.newsFilter;
+  const sp500 = layers.sp500Comparison;
 
   let out = '';
 
@@ -61,6 +62,20 @@ export function formatStockCheckup(checkup: StockCheckup): string {
     if (s.sector) parts.push(s.sector);
     if (parts.length) out += parts.join(' · ') + '\n';
   }
+  if (sp500 && (sp500.ytdPerformance != null || sp500.summary)) {
+    if (sp500.summary && !sp500.summary.includes('Error')) {
+      out += `Vs S&P 500: ${sp500.summary}\n`;
+    } else if (sp500.ytdPerformance != null && sp500.sp500YTD != null) {
+      const stockYtd = `${sp500.ytdPerformance >= 0 ? '+' : ''}${sp500.ytdPerformance.toFixed(1)}%`;
+      const indexYtd = `${sp500.sp500YTD >= 0 ? '+' : ''}${sp500.sp500YTD.toFixed(1)}%`;
+      out += `Vs S&P 500: Stock YTD ${stockYtd}, 1Y ${sp500.oneYearPerformance != null ? (sp500.oneYearPerformance >= 0 ? '+' : '') + sp500.oneYearPerformance.toFixed(1) + '%' : '—'}, 5Y ${sp500.fiveYearPerformance != null ? (sp500.fiveYearPerformance >= 0 ? '+' : '') + sp500.fiveYearPerformance.toFixed(1) + '%' : '—'} | Index YTD ${indexYtd}, 1Y ${sp500.sp500OneYear != null ? (sp500.sp500OneYear >= 0 ? '+' : '') + sp500.sp500OneYear.toFixed(1) + '%' : '—'}, 5Y ${sp500.sp500FiveYear != null ? (sp500.sp500FiveYear >= 0 ? '+' : '') + sp500.sp500FiveYear.toFixed(1) + '%' : '—'}\n`;
+      if (sp500.outperforming != null && sp500.outperformanceAmount != null) {
+        out += sp500.outperforming
+          ? `Outperforming the S&P 500 by ${Math.abs(sp500.outperformanceAmount).toFixed(1)}% YTD\n`
+          : `Underperforming the S&P 500 by ${Math.abs(sp500.outperformanceAmount).toFixed(1)}% YTD\n`;
+      }
+    }
+  }
   out += '\n';
 
   // —— Growth & profitability (story, not raw scores) ——
@@ -88,7 +103,7 @@ export function formatStockCheckup(checkup: StockCheckup): string {
   // —— Bottom line ——
   if (d?.recommendations?.length) {
     out += `**Bottom line**\n`;
-    d.recommendations.slice(0, 4).forEach((rec: string) => { out += `→ ${rec}\n`; });
+    d.recommendations.slice(0, 6).forEach((rec: string) => { out += `→ ${rec}\n`; });
     out += '\n';
   }
 

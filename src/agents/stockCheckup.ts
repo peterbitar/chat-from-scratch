@@ -5,6 +5,19 @@ import { getEarningsCalendar } from '../tools/earningsCalendar';
 import { getAnalystRatings } from '../tools/analystRatings';
 import { getSP500Comparison } from '../tools/sp500Comparison';
 
+/** S&P 500 comparison for valuation context (from getSP500Comparison). */
+export interface Sp500ComparisonLayer {
+  ytdPerformance?: number;
+  oneYearPerformance?: number;
+  fiveYearPerformance?: number;
+  sp500YTD?: number;
+  sp500OneYear?: number;
+  sp500FiveYear?: number;
+  outperforming?: boolean;
+  outperformanceAmount?: number;
+  summary?: string;
+}
+
 export interface StockCheckup {
   symbol: string;
   timestamp: string;
@@ -17,6 +30,7 @@ export interface StockCheckup {
     efficiency: EfficiencyLayer;
     expectations: ExpectationsLayer;
     analystSignals: AnalystSignalsLayer;
+    sp500Comparison: Sp500ComparisonLayer;
     newsFilter: NewsFilterLayer;
     riskRadar: RiskRadarLayer;
     decisionHelper: DecisionHelperLayer;
@@ -175,6 +189,7 @@ export async function generateStockCheckup(symbol: string): Promise<StockCheckup
         efficiency: buildEfficiency(valuation),
         expectations: buildExpectations(valuation, ratings, sp500comp),
         analystSignals: buildAnalystSignals(ratings, sp500comp),
+        sp500Comparison: buildSp500ComparisonLayer(sp500comp),
         newsFilter: buildNewsFilter(newsUpdate),
         riskRadar: buildRiskRadar(valuation, peers),
         decisionHelper: buildDecisionHelper(valuation, ratings, sp500comp, newsUpdate.headlines)
@@ -472,6 +487,23 @@ function buildAnalystSignals(ratings: any, sp500: any): AnalystSignalsLayer {
   };
 }
 
+function buildSp500ComparisonLayer(sp500: any): Sp500ComparisonLayer {
+  if (!sp500 || sp500.summary?.includes('Error')) {
+    return {};
+  }
+  return {
+    ytdPerformance: sp500.ytdPerformance,
+    oneYearPerformance: sp500.oneYearPerformance,
+    fiveYearPerformance: sp500.fiveYearPerformance,
+    sp500YTD: sp500.sp500YTD,
+    sp500OneYear: sp500.sp500OneYear,
+    sp500FiveYear: sp500.sp500FiveYear,
+    outperforming: sp500.outperforming,
+    outperformanceAmount: sp500.outperformanceAmount,
+    summary: sp500.summary
+  };
+}
+
 function buildNewsFilter(newsUpdate: any): NewsFilterLayer {
   const headlines = Array.isArray(newsUpdate?.headlines) ? newsUpdate.headlines : (Array.isArray(newsUpdate) ? newsUpdate : [newsUpdate]);
 
@@ -604,8 +636,6 @@ function buildDecisionHelper(valuation: any, ratings: any, sp500: any, sentiment
   let sentimentLevel = avgSentiment;
   let marketPosition = epsGrowth > 15 ? 'Growth leader' : epsGrowth > 5 ? 'Growing' : epsGrowth > 0 ? 'Stable' : 'Declining';
 
-  const interpretation = `${businessQuality} | ${valuationLevel} valuation | Growth: ${marketPosition}`;
-
   const recommendations = [
     `Business Quality: ${businessQuality}`,
     `Valuation: ${valuationLevel} (P/E ${peRatio.toFixed(1)}x vs ${sector} avg ${sectorPE.toFixed(1)}x)`,
@@ -614,6 +644,14 @@ function buildDecisionHelper(valuation: any, ratings: any, sp500: any, sentiment
     `Growth trajectory: ${marketPosition} (EPS growth ${epsGrowth?.toFixed(1)}%)`,
     `News sentiment: ${avgSentiment}`
   ];
+  if (sp500?.outperforming != null && sp500?.outperformanceAmount != null && !String(sp500.summary || '').includes('Error')) {
+    const vs = sp500.outperforming
+      ? `Outperforming S&P 500 by ${Math.abs(sp500.outperformanceAmount).toFixed(1)}% YTD`
+      : `Underperforming S&P 500 by ${Math.abs(sp500.outperformanceAmount).toFixed(1)}% YTD`;
+    recommendations.push(vs);
+  }
+
+  const interpretation = `${businessQuality} | ${valuationLevel} valuation | Growth: ${marketPosition}`;
 
   return {
     businessQuality,
