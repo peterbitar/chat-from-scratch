@@ -1,6 +1,6 @@
 import { getValuation } from './valuationExtractor';
 import { getPeerComparison } from './peerComparison';
-import { getNewsSentiment } from './newsSentiment';
+import { getNewsUpdate } from './newsSentiment';
 import { getEarningsCalendar } from './earningsCalendar';
 import { getAnalystRatings } from './analystRatings';
 import { getSP500Comparison } from './sp500Comparison';
@@ -39,20 +39,23 @@ export const tools = [
     func: getPeerComparison
   },
   {
-    name: 'getNewsSentiment',
+    name: 'getNewsUpdate',
     type: 'function',
     function: {
-      name: 'getNewsSentiment',
-      description: 'Analyze sentiment of recent news for a stock',
+      name: 'getNewsUpdate',
+      description: 'Get a news update for a stock: returns a storyline summary of what is happening (narrative) plus recent headlines with sentiment. Optional: from/to (YYYY-MM-DD), limit (1–20).',
       parameters: {
         type: 'object',
         properties: {
-          symbol: { type: 'string', description: 'Ticker symbol (e.g., TSLA)' }
+          symbol: { type: 'string', description: 'Ticker symbol (e.g., TSLA)' },
+          from: { type: 'string', description: 'Optional: only news on or after this date (YYYY-MM-DD)' },
+          to: { type: 'string', description: 'Optional: only news on or before this date (YYYY-MM-DD)' },
+          limit: { type: 'number', description: 'Optional: max headlines to return (1–20, default 10)' }
         },
         required: ['symbol']
       }
     },
-    func: getNewsSentiment
+    func: getNewsUpdate
   },
   {
     name: 'getEarningsCalendar',

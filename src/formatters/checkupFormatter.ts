@@ -2,223 +2,109 @@ import { StockCheckup } from '../agents/stockCheckup';
 
 export function formatStockCheckup(checkup: StockCheckup): string {
   const { symbol, layers } = checkup;
-  let output = '';
+  const d = layers.decisionHelper;
+  const s = layers.snapshot;
+  const h = layers.healthScore;
+  const a = layers.analystSignals;
+  const f = layers.financialReality;
+  const exp = layers.expectations;
+  const risk = layers.riskRadar;
+  const news = layers.newsFilter;
 
-  // Header
-  output += `\n${'═'.repeat(80)}\n`;
-  output += `  📊 STOCK CHECKUP: ${symbol}\n`;
-  output += `${'═'.repeat(80)}\n\n`;
+  let out = '';
 
-  // Layer 1: Snapshot
-  output += formatSnapshot(symbol, layers.snapshot);
+  // —— Header ——
+  out += `**${symbol} — Stock Checkup**\n\n`;
 
-  // Layer 2: Health Score
-  output += formatHealthScore(layers.healthScore);
+  // —— One-line takeaway (most important) ——
+  if (d?.overallInterpretation) {
+    out += `${d.overallInterpretation}\n\n`;
+  }
 
-  // Layer 3: Financial Reality
-  output += formatFinancialReality(layers.financialReality);
+  // —— Key metrics only: score, rating, consensus, buy/hold/sell ——
+  out += `**The numbers that matter**\n`;
+  const scoreLine: string[] = [];
+  if (h?.overallScore != null) scoreLine.push(`Score ${h.overallScore}/100`);
+  if (h?.scoreLabel) scoreLine.push(`(${h.scoreLabel})`);
+  if (scoreLine.length) out += scoreLine.join(' ') + '\n';
+  if (a?.consensusRating) out += `Analyst consensus: ${a.consensusRating}\n`;
+  const buy = a?.buyCount ?? 0;
+  const hold = a?.holdCount ?? 0;
+  const sell = a?.sellCount ?? 0;
+  if (buy + hold + sell > 0) {
+    out += `Recommendations: ${buy} Buy · ${hold} Hold · ${sell} Sell\n`;
+  }
+  out += '\n';
 
-  // Layer 4: Expectations
-  output += formatExpectations(layers.expectations);
+  // —— Price & valuation in plain language ——
+  out += `**Price & valuation**\n`;
+  if (s?.currentPrice != null) {
+    out += `Trading at $${s.currentPrice.toFixed(2)}`;
+    if (a?.priceTarget != null) {
+      const pct = ((a.priceTarget - s.currentPrice) / s.currentPrice * 100).toFixed(0);
+      const dir = a.priceTarget >= s.currentPrice ? 'upside' : 'downside';
+      out += `. Analysts’ average target: $${a.priceTarget.toFixed(0)} (${Math.abs(Number(pct))}% ${dir})`;
+    }
+    out += '\n';
+  }
+  if (f?.peRatio != null && f?.sectorPE != null) {
+    const vs = f.peRatio < f.sectorPE ? 'below' : 'above';
+    const pct = Math.abs(((f.peRatio - f.sectorPE) / f.sectorPE) * 100).toFixed(0);
+    out += `P/E ${f.peRatio.toFixed(1)}x (${vs} sector average of ${f.sectorPE.toFixed(1)}x) — ${f.peRatio < f.sectorPE ? 'valuation is relatively modest' : 'market is pricing in growth'}\n`;
+  } else if (f?.peRatio != null) {
+    out += `P/E ${f.peRatio.toFixed(1)}x\n`;
+  }
+  if (d?.valuationLevel) out += `Valuation view: ${d.valuationLevel}\n`;
+  if (s?.marketCap || s?.sector) {
+    const parts: string[] = [];
+    if (s.marketCap != null) parts.push(typeof s.marketCap === 'string' ? s.marketCap : fmtCap(s.marketCap));
+    if (s.sector) parts.push(s.sector);
+    if (parts.length) out += parts.join(' · ') + '\n';
+  }
+  out += '\n';
 
-  // Layer 5: Analyst Signals
-  output += formatAnalystSignals(layers.analystSignals);
+  // —— Growth & profitability (story, not raw scores) ——
+  out += `**Growth & profitability**\n`;
+  const growthParts: string[] = [];
+  if (f?.epsGrowth != null && f.epsGrowth.yoy != null) {
+    growthParts.push(`EPS growth ${f.epsGrowth.yoy >= 0 ? '+' : ''}${f.epsGrowth.yoy.toFixed(1)}% YoY`);
+  }
+  if (f?.revenueGrowth != null && f.revenueGrowth.yoy != null) {
+    growthParts.push(`revenue ${f.revenueGrowth.yoy >= 0 ? '+' : ''}${f.revenueGrowth.yoy}% YoY`);
+  }
+  if (growthParts.length) out += growthParts.join(', ') + '\n';
+  if (d?.marketPosition) out += `Trajectory: ${d.marketPosition}\n`;
+  if (d?.businessQuality) out += `Business quality: ${d.businessQuality}\n`;
+  if (exp?.impliedExpectations) out += `${exp.impliedExpectations}\n`;
+  out += '\n';
 
-  // Layer 6: News Filter
-  output += formatNewsFilter(layers.newsFilter);
+  // —— Risks (short, actionable) ——
+  if (risk?.keyRisks?.length) {
+    out += `**What to watch**\n`;
+    risk.keyRisks.slice(0, 3).forEach((r) => { out += `· ${r}\n`; });
+    out += '\n';
+  }
 
-  // Layer 7: Risk Radar
-  output += formatRiskRadar(layers.riskRadar);
+  // —— Bottom line ——
+  if (d?.recommendations?.length) {
+    out += `**Bottom line**\n`;
+    d.recommendations.slice(0, 4).forEach((rec: string) => { out += `→ ${rec}\n`; });
+    out += '\n';
+  }
 
-  // Layer 8: Decision Helper
-  output += formatDecisionHelper(layers.decisionHelper);
+  // —— News (one paragraph) ——
+  if (news?.storyline) {
+    out += `**Recent context**\n`;
+    const first = news.storyline.split(/\n\n/)[0];
+    out += `${first}\n`;
+  }
 
-  output += `\n${'═'.repeat(80)}\n`;
-
-  return output;
+  return out.trimEnd() + '\n';
 }
 
-function formatSnapshot(symbol: string, layer: any): string {
-  let output = `\n1️⃣  SNAPSHOT — "What am I looking at?"\n${'─'.repeat(80)}\n`;
-
-  output += `  Symbol: ${symbol}\n`;
-  if (layer.currentPrice) output += `  Current Price: $${layer.currentPrice.toFixed(2)}\n`;
-  if (layer.marketCap) output += `  Market Cap: ${layer.marketCap}\n`;
-  if (layer.currency) output += `  Currency: ${layer.currency}\n`;
-
-  output += '\n';
-  return output;
-}
-
-function formatHealthScore(layer: any): string {
-  let output = `2️⃣  HEALTH SCORE — "Is this company fundamentally OK?"\n${'─'.repeat(80)}\n`;
-
-  const scoreBar = getScoreBar(layer.overallScore || 0);
-  output += `  Overall Score: ${layer.overallScore || '?'}/100 [${scoreBar}] ${layer.scoreLabel || '?'}\n\n`;
-
-  output += `  Sub-Scores:\n`;
-  if (layer.subScores.profitability) {
-    output += `    • Profitability: ${layer.subScores.profitability.score}/100 (${layer.subScores.profitability.status})\n`;
-  }
-  if (layer.subScores.financialStrength) {
-    output += `    • Financial Strength: ${layer.subScores.financialStrength.score}/100 (${layer.subScores.financialStrength.status})\n`;
-  }
-  if (layer.subScores.growthQuality) {
-    output += `    • Growth Quality: ${layer.subScores.growthQuality.score}/100 (${layer.subScores.growthQuality.status})\n`;
-  }
-  if (layer.subScores.valuationSanity) {
-    output += `    • Valuation: ${layer.subScores.valuationSanity.score}/100 (${layer.subScores.valuationSanity.status})\n`;
-  }
-
-  if (layer.methodology) output += `\n  Methodology: ${layer.methodology}\n`;
-  output += '\n';
-  return output;
-}
-
-function formatFinancialReality(layer: any): string {
-  let output = `3️⃣  FINANCIAL REALITY — "Is the business actually working?"\n${'─'.repeat(80)}\n`;
-
-  if (layer.revenueGrowth) {
-    const trend = getTrendIcon(layer.revenueGrowth.trend);
-    output += `  Revenue Growth: ${trend} ${layer.revenueGrowth.yoy}% YoY\n`;
-  }
-
-  if (layer.epsGrowth) {
-    const trend = getTrendIcon(layer.epsGrowth.trend);
-    output += `  EPS Growth: ${trend} ${layer.epsGrowth.yoy.toFixed(2)} YoY\n`;
-  }
-
-  if (layer.freeCashFlow) {
-    const trend = getTrendIcon(layer.freeCashFlow.trend);
-    output += `  Free Cash Flow: ${trend} ${layer.freeCashFlow.absolute} (${layer.freeCashFlow.margin}% margin)\n`;
-  }
-
-  if (layer.profitability) {
-    output += `  Profitability:\n`;
-    if (layer.profitability.grossMargin) output += `    • Gross Margin: ${layer.profitability.grossMargin}%\n`;
-    if (layer.profitability.operatingMargin) output += `    • Operating Margin: ${layer.profitability.operatingMargin}%\n`;
-    if (layer.profitability.netMargin) output += `    • Net Margin: ${layer.profitability.netMargin}%\n`;
-  }
-
-  if (layer.summary) output += `\n  ${layer.summary}\n`;
-  output += '\n';
-  return output;
-}
-
-function formatExpectations(layer: any): string {
-  let output = `4️⃣  EXPECTATIONS & VALUATION — "What's priced in?"\n${'─'.repeat(80)}\n`;
-
-  if (layer.currentMultiple) {
-    output += `  ${layer.currentMultiple.metric}: ${layer.currentMultiple.value.toFixed(2)}x\n`;
-  }
-  if (layer.historicalAverage) {
-    output += `  Historical Average Multiple: ${layer.historicalAverage}x\n`;
-  }
-  if (layer.expectedGrowth) {
-    output += `  Expected Growth: ~${layer.expectedGrowth.rate}% over ${layer.expectedGrowth.years} years\n`;
-  }
-
-  output += `\n  Implied Expectations:\n  "${layer.impliedExpectations}"\n`;
-
-  if (layer.scenarios) {
-    output += `\n  Scenarios:\n`;
-    if (layer.scenarios.bestCase) output += `    Best Case: ${layer.scenarios.bestCase}\n`;
-    if (layer.scenarios.baseCase) output += `    Base Case: ${layer.scenarios.baseCase}\n`;
-    if (layer.scenarios.riskCase) output += `    Risk Case: ${layer.scenarios.riskCase}\n`;
-  }
-  output += '\n';
-  return output;
-}
-
-function formatAnalystSignals(layer: any): string {
-  let output = `5️⃣  ANALYST & MARKET SIGNALS — "What's changing?"\n${'─'.repeat(80)}\n`;
-
-  if (layer.consensusRating) output += `  Consensus Rating: ${layer.consensusRating}\n`;
-  if (layer.priceTarget) output += `  Price Target: $${layer.priceTarget.toFixed(2)}\n`;
-  if (layer.numberOfAnalysts) output += `  Number of Analysts: ${layer.numberOfAnalysts}\n`;
-
-  if (layer.priceTargetTrend) {
-    const trend = getTrendIcon(layer.priceTargetTrend);
-    output += `  Price Target Trend: ${trend}\n`;
-  }
-
-  if (layer.sentimentShift) output += `  Sentiment Shift: ${layer.sentimentShift}\n`;
-
-  if (layer.analystsDifference) {
-    output += `  Estimate Revisions: ${layer.analystsDifference.raising} analysts raising, ${layer.analystsDifference.cutting} cutting\n`;
-  }
-
-  output += '\n';
-  return output;
-}
-
-function formatNewsFilter(layer: any): string {
-  let output = `6️⃣  LIVE NEWS FILTER — "What matters today?"\n${'─'.repeat(80)}\n`;
-
-  if (layer.summary) output += `  ${layer.summary}\n`;
-
-  if (layer.recentHeadlines && layer.recentHeadlines.length > 0) {
-    output += `\n  Recent Headlines:\n`;
-    layer.recentHeadlines.slice(0, 5).forEach((headline: any) => {
-      const impactIcon = headline.impact === 'high' ? '🔴' : headline.impact === 'medium' ? '🟡' : '⚪';
-      output += `    ${impactIcon} [${headline.category.toUpperCase()}] ${headline.title.substring(0, 60)}...\n`;
-      output += `       ${headline.relevance}\n`;
-    });
-  }
-
-  output += '\n';
-  return output;
-}
-
-function formatRiskRadar(layer: any): string {
-  let output = `7️⃣  RISK RADAR — "What could go wrong?"\n${'─'.repeat(80)}\n`;
-
-  if (layer.keyRisks && layer.keyRisks.length > 0) {
-    output += `  Key Risks:\n`;
-    layer.keyRisks.forEach((risk: string) => {
-      output += `    ⚠️  ${risk}\n`;
-    });
-  }
-
-  if (layer.cyclicalityExposure) output += `\n  Cyclicality Exposure: ${layer.cyclicalityExposure}\n`;
-  if (layer.leverageRisk) output += `  Leverage Risk: ${layer.leverageRisk}\n`;
-  if (layer.dependencyRisk) {
-    if (layer.dependencyRisk.customers) output += `  Customer Dependency: ${layer.dependencyRisk.customers}\n`;
-    if (layer.dependencyRisk.geography) output += `  Geographic Risk: ${layer.dependencyRisk.geography}\n`;
-  }
-
-  output += '\n';
-  return output;
-}
-
-function formatDecisionHelper(layer: any): string {
-  let output = `8️⃣  DECISION HELPER — "So... what does this mean for me?"\n${'─'.repeat(80)}\n`;
-
-  if (layer.businessQuality) output += `  Business Quality: ${layer.businessQuality}\n`;
-  if (layer.valuationLevel) output += `  Valuation Level: ${layer.valuationLevel}\n`;
-  if (layer.sentimentLevel) output += `  Sentiment: ${layer.sentimentLevel}\n`;
-
-  output += `\n  Interpretation:\n  "${layer.overallInterpretation}"\n`;
-
-  if (layer.recommendations && layer.recommendations.length > 0) {
-    output += `\n  Key Takeaways:\n`;
-    layer.recommendations.forEach((rec: string) => {
-      output += `    → ${rec}\n`;
-    });
-  }
-
-  output += '\n';
-  return output;
-}
-
-function getScoreBar(score: number): string {
-  const filled = Math.round(score / 10);
-  const empty = 10 - filled;
-  return '█'.repeat(filled) + '░'.repeat(empty);
-}
-
-function getTrendIcon(trend: string): string {
-  if (trend === 'improving') return '📈';
-  if (trend === 'deteriorating') return '📉';
-  return '→';
+function fmtCap(n: number): string {
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(1)}T`;
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
+  return `$${n}`;
 }

@@ -5,11 +5,11 @@ import { tools } from '../tools/tools';
 dotenv.config();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Build Responses API tools: web_search + our function tools
+// Build Responses API tools: web_search + our function tools (exclude getNewsUpdate — news uses web_search only, no FMP).
 const apiTools = [
   { type: 'web_search_preview' as const },
   ...tools
-    .filter((t): t is typeof t & { function: object; func: (args: unknown) => unknown } => 'function' in t && !!t.function)
+    .filter((t): t is typeof t & { function: object; func: (args: unknown) => unknown } => 'function' in t && !!t.function && (t as { name?: string }).name !== 'getNewsUpdate')
     .map((t) => ({
       type: 'function' as const,
       name: t.function.name,
@@ -19,53 +19,113 @@ const apiTools = [
     }))
 ];
 
+/** Detect if the user is asking for news/headlines about a stock. */
+function isNewsQuestion(input: string): boolean {
+  const lower = input.toLowerCase().trim();
+  const newsPhrases = ['news', 'headlines', "what's happening", 'whats happening', 'recent', 'latest', 'updates', 'current events'];
+  const hasNewsIntent = newsPhrases.some((p) => lower.includes(p));
+  if (!hasNewsIntent) return false;
+  // Optional: require something that looks like a symbol or "for X"
+  const hasSymbolHint = /\b[A-Z]{1,5}\b/.test(input) || /\b(for|about)\s+\w+/.test(lower);
+  return hasSymbolHint || hasNewsIntent; // treat "recent news" as news even without symbol
+}
+
+/** Extract a likely ticker from the question (e.g. "news for PYPL" -> PYPL). */
+function extractSymbolFromNewsQuestion(input: string): string | null {
+  const match = input.match(/\b(for|about)\s+([A-Z]{1,5})\b/i) || input.match(/\b([A-Z]{2,5})\b/);
+  return match ? (match[2] || match[1]).toUpperCase() : null;
+}
+
 export async function runFinanceAgent(
   userInput: string,
   noobMode: boolean = false
 ): Promise<{ text: string; toolsUsed: string[] }> {
-  const instructions = `You are FinanceGPT, an expert financial analyst. Follow these rules strictly:
+  const instructions = `You are The Rabbit: a financial analyst. Bring clarity through numbers, calm through context, confidence through evidence. No stress, no urgency.
 
-TOOL SELECTION STRATEGY:
-1. For valuation questions ("Is X overvalued?", "What's the P/E?", "Fair value?"):
-   - FIRST: Call getValuation to get current metrics (P/E, EPS, price, market cap)
-   - SECOND: Call getPeerComparison to see how it compares to industry average
-   - THIRD: Call getAnalystRatings to see what analysts think about valuation
-   - OPTIONAL: Call getNewsSentiment for recent market sentiment
+MANDATORY — STORYLINE, BREVITY, PARAGRAPHS, NO LINKS:
+- Always reply as a short storyline: flowing prose only. No bullet points, no numbered lists, no "key points" or "headlines" sections. Tell it like a brief narrative. Explain why each point matters (e.g. why a number or event is relevant) in one short phrase so the user gets context.
+- Reply in 2–4 short paragraphs. Put a blank line between each paragraph (use two newlines so paragraphs are clearly separated). Include only what directly answers the question.
+- NEVER output URLs, links, markdown links, or "source:", "according to", "see …" citations. The user must not see any links or source references. Answer in your own voice using the data.
 
-2. For analyst/rating questions ("What do analysts think?", "Should I buy?", "Price target?"):
-   - FIRST: Call getAnalystRatings for consensus ratings and price targets
-   - SECOND: Call getValuation to see if stock is trading near analyst targets
-   - OPTIONAL: Web search for specific analyst reports or recent rating changes
+AVAILABLE TOOLS:
+- getValuation: P/E, EPS, price, market cap, growth, profitability, liquidity; also sector, industry, sectorAveragePE, industryAveragePE when available.
+- getPeerComparison: peer tickers and peerAveragePE (average P/E of peers). Use peerAveragePE for industry comparison when getValuation sector/industry averages are missing; always cite it in the answer (e.g. "P/E 7.5 vs peer average 11.3").
+- getEarningsCalendar: earnings dates, EPS/revenue actual vs estimate
+- getAnalystRatings: consensus rating, price target, buy/hold/sell counts
+- getSP500Comparison: stock vs S&P 500 (YTD, 1/3/5-year)
+- web search: recent news, general topics, or when tools don't cover the question
 
-3. For performance/market comparison ("Is X beating S&P 500?", "How does X compare to market?", "Should I buy this or SPY?"):
-   - FIRST: Call getSP500Comparison to see YTD and historical performance vs benchmark
-   - SECOND: Call getValuation to compare valuations
-   - OPTIONAL: Call getAnalystRatings for consensus view
+TOOL SELECTION (call in order; use tools to get data before answering):
+0. Full checkup: call getValuation, getPeerComparison, getEarningsCalendar, getAnalystRatings, getSP500Comparison; for news use web_search with "[symbol] stock recent news".
+1. Valuation: getValuation → getPeerComparison → getAnalystRatings; optional web search for context.
+2. Analyst/ratings: getAnalystRatings → getValuation.
+3. Performance vs market: getSP500Comparison → getValuation; optional getAnalystRatings.
+4. Earnings: getEarningsCalendar; optional web search.
+5. Compare two stocks: getValuation (both), getPeerComparison (primary), getAnalystRatings (both), getSP500Comparison.
+6. Compare to industry / sector / peers: call getValuation and getPeerComparison. Use sectorAveragePE and industryAveragePE from getValuation when present. When those are null, use peerAveragePE (or sectorAveragePE) from getPeerComparison and write it in the answer: e.g. "P/E 7.5 vs peer average 11.3" so the user gets a concrete industry comparison.
+7. News (recent news, what's happening, headlines for a symbol): call web_search only with a query like "[symbol] stock recent news" or "[symbol] company news". Then write one short storyline from the results; no bullets or headline lists.
+8. General/macro: web search.
 
-4. For earnings/timing questions ("When does X report earnings?", "Beat expectations?"):
-   - FIRST: Call getEarningsCalendar to get earnings dates and historical EPS data
-   - OPTIONAL: Web search for very recent earnings surprises not yet in the calendar
+RESPONSE STYLE — THE RABBIT'S RULES (follow every time):
 
-5. For competitive analysis ("How does X compare to Y?"):
-   - Call getValuation for both stocks
-   - Call getPeerComparison for the primary stock
-   - Call getAnalystRatings for both stocks to compare analyst sentiment
-   - Call getSP500Comparison to see which beats the market
-   - Compare metrics directly
+0. Storyline only; always explain why; use paragraphs
+- Write only in flowing prose (a short storyline). No bullets, no numbered lists, no "key points" or headline lists.
+- Separate paragraphs with a blank line (two newlines). Do not output one long block of text.
+- For each fact or number you mention, briefly say why it matters (e.g. "…which matters because…", "…so investors watch…"). Context in one short phrase.
 
-6. For news/sentiment questions ("What's the market saying about X?"):
-   - FIRST: Call getNewsSentiment
-   - OPTIONAL: Web search for additional recent breaking news
+1. Evidence before emotion
+- Use numbers, ratios, ranges, and historical comparisons whenever available.
+- Prefer facts over opinions. Present data as information, not signals.
+- Good: "Historically, this range has occurred X% of the time." "Over the last N years…" "Compared to its own history, this is…"
+- Numbers are grounding. Use them to stabilize, not excite.
 
-7. For topics unrelated to specific stocks (market trends, economic data, general finance):
-   - Use web search as your primary tool
+2. Scientific framing, not predictions
+- Use probabilistic language only; never certainty.
+- Frame outcomes as scenarios, not forecasts. Emphasize distributions, not single-point outcomes.
+- Good: "This increases the probability of…" "The data suggests a higher likelihood…" "Within a normal historical range…"
+- Never say: "This means the stock will…" "A crash is coming." "Guaranteed upside."
 
-EXECUTION RULES:
-- Call tools in the order specified above - don't skip steps
-- If a tool returns an error, don't retry the same tool - use web search as fallback
-- Always cite which tool provided each data point
-- Prefer our specialized tools over web search for accuracy on financial metrics
-- Be concise in your response - summarize key findings`;
+3. Use numbers calmly
+- Never highlight numbers dramatically. No exclamation marks on metrics. No shock-value statistics.
+- Bad: "EPS collapsed by 40%!!!"
+- Good: "EPS declined by roughly 40%; similar declines have occurred X times in the past Y years."
+
+4. Contextualize every metric
+- No standalone numbers. Anchor every figure to: historical averages, industry norms, company baselines, or long-term trends.
+- Template: "X is currently Y, compared to its long-term average of Z."
+
+5. Prefer ranges over point estimates
+- Use bands, intervals, and tolerances. Highlight uncertainty explicitly.
+- Examples: "Estimated range: 8–12%." "Valuation multiples typically fall between A and B."
+
+6. Explain the method briefly
+- Mention how the conclusion is derived at a high level. No formulas unless necessary. No links or footnotes.
+- Examples: "Based on discounted cash flow assumptions…" "Using historical multiples and growth rates…"
+
+7. Statistical humility
+- Acknowledge data limitations: short time windows, regime changes, one-off events.
+- Examples: "Sample size is limited." "This period includes unusual conditions." "Results are sensitive to assumptions."
+
+8. Calm interpretation layer
+- After presenting numbers, translate into plain meaning. Emphasize what does not change. Reduce emotional impact.
+- Example: "Even with this decline, the company remains within its normal profitability range."
+
+9. No calls to action
+- Never conclude with "buy", "sell", or "act now." Never imply timing pressure. Let the user decide, informed and calm.
+- Closing tone: "This is information to consider, not a signal to react."
+
+10. Only the important stuff
+- Be brief. Mention only what is relevant to the user's question.
+- Skip minor details, filler, and tangents. If in doubt, leave it out.
+- Do not list every metric; highlight the few that matter for the question.
+
+11. No links or sources in the reply
+- Never include URLs, links, or footnotes.
+- Do not cite sources (e.g. "according to…", "data from getValuation shows…"). Use the data to answer in your own voice; the user does not see tool names or sources.
+
+EXECUTION:
+- Call tools in the order above; if a tool errors, use web search as fallback.
+- Keep responses short and focused. No links, no source citations.`;
 
   let input: OpenAI.Responses.ResponseInput = [{ role: 'user', content: userInput, type: 'message' }];
   const toolsUsed: string[] = [];
@@ -93,14 +153,27 @@ EXECUTION RULES:
     // Execute any function calls and append outputs
     const functionCalls = response.output.filter((item) => (item as { type?: string }).type === 'function_call');
     if (functionCalls.length === 0) {
+      const newsQuestion = isNewsQuestion(userInput);
+      const hasWeb = toolsUsed.includes('web_search');
+      if (newsQuestion && !hasWeb) {
+        const symbol = extractSymbolFromNewsQuestion(userInput) ?? 'the stock';
+        input.push({
+          type: 'message',
+          role: 'user',
+          content: `This is a news question. You must call web_search with a query about "${symbol}" recent news, then write one short storyline from the results.`
+        });
+        continue;
+      }
       let finalText = response.output_text ?? '';
+      finalText = stripLinksAndSources(finalText);
+      finalText = normalizeParagraphBreaks(finalText);
       if (noobMode) {
         finalText = simplifyFinanceResponse(finalText);
       }
       return { text: finalText, toolsUsed: [...new Set(toolsUsed)] };
     }
 
-    // Execute all function calls in parallel
+    // Execute all function calls in parallel.
     const results = await Promise.all(
       (functionCalls as { call_id: string; name: string; arguments: string }[]).map(async (call) => {
         const tool = tools.find((t) => (t as { name?: string }).name === call.name) as { func?: (args: unknown) => unknown };
@@ -138,6 +211,47 @@ EXECUTION RULES:
 
   // Max turns exceeded
   return { text: 'Max tool calls exceeded. Please refine your question.', toolsUsed: [...new Set(toolsUsed)] };
+}
+
+/**
+ * Ensure paragraph breaks for chat: collapse 3+ newlines to \n\n.
+ * If the model returns one long block (no \n\n), insert \n\n every 2–3 sentences so chat shows separate paragraphs.
+ */
+function normalizeParagraphBreaks(text: string): string {
+  if (!text || typeof text !== 'string') return text;
+  let out = text.replace(/\n{3,}/g, '\n\n').trim();
+  if (out.includes('\n\n')) return out;
+  if (out.length < 200) return out;
+  const sentences = out.split(/(?<=[.!?])\s+(?=[A-Z])/).map((s) => s.trim()).filter(Boolean);
+  if (sentences.length <= 1) return out;
+  const paragraphs: string[] = [];
+  const perParagraph = Math.max(1, Math.ceil(sentences.length / 3));
+  for (let i = 0; i < sentences.length; i += perParagraph) {
+    paragraphs.push(sentences.slice(i, i + perParagraph).join(' '));
+  }
+  return paragraphs.join('\n\n');
+}
+
+/**
+ * Remove all URLs and source citations from the reply. User must not see links or sources.
+ */
+function stripLinksAndSources(text: string): string {
+  if (!text || typeof text !== 'string') return text;
+  let out = text;
+  // Replace markdown links [label](url) with just the label (no URL)
+  out = out.replace(/\[([^\]]*)\]\(https?:\/\/[^)]+\)/g, '$1');
+  // Remove any remaining raw URLs
+  out = out.replace(/https?:\/\/[^\s\]\)"]+/g, '');
+  // Remove "Source:", "According to ...", "See ...", "From ..." citation lines/phrases
+  out = out.replace(/\n?\s*(Source|Sources|According to|See|From|Cited from|Reference[s]?):[^\n]*(?=\n|$)/gi, '\n');
+  out = out.replace(/\b(according to|see|from)\s+[^.]*\./gi, '');
+  // Remove parenthetical source refs e.g. (tipranks.com), (economictimes.indiatimes.com)
+  out = out.replace(/\s*\([a-z0-9][-a-z0-9.]*\.[a-z]{2,}(?:\/[^)]*)?\)\s*/gi, ' ');
+  // Remove standalone "Highlighted Headlines" / "Headlines:" bullet blocks that were only link lists (optional cleanup)
+  out = out.replace(/\n\s*\*\*Highlighted Headlines\*\*:\s*\n([\s\S]*?)(?=\n\n|\nOverall|$)/gi, '\n');
+  // Collapse multiple newlines and trim
+  out = out.replace(/\n{3,}/g, '\n\n').replace(/\s+$/gm, '').trim();
+  return out;
 }
 
 /**
@@ -181,15 +295,9 @@ function simplifyFinanceResponse(text: string): string {
     simplified = simplified.replace(regex, simple);
   }
 
-  // Add helpful context after financial recommendations
-  if (
-    simplified.toLowerCase().includes('buy') ||
-    simplified.toLowerCase().includes('sell') ||
-    simplified.toLowerCase().includes('hold')
-  ) {
-    if (!simplified.toLowerCase().includes('do your own research')) {
-      simplified += '\n\n💡 Remember: Do your own research and only invest money you can afford to lose.';
-    }
+  // Add calm closing (Rabbit-style: no pressure, inform don't urge)
+  if (!simplified.toLowerCase().includes('information to consider')) {
+    simplified += '\n\nThis is information to consider, not a signal to react.';
   }
 
   // Add quick glossary for key terms if present

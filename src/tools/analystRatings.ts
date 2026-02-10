@@ -17,56 +17,45 @@ export interface AnalystRating {
 
 export async function getAnalystRatings({ symbol }: { symbol: string }): Promise<AnalystRating> {
   try {
-    // Get analyst ratings from FMP Starter - NEW /stable/ endpoints
-    const [gradesRes, targetRes] = await Promise.all([
-      axios.get(`${BASE}/grades?symbol=${symbol.toUpperCase()}&apikey=${FMP_API_KEY}`).catch(() => ({ data: [] })),
-      axios.get(`${BASE}/price-target-consensus?symbol=${symbol.toUpperCase()}&apikey=${FMP_API_KEY}`).catch(() => ({ data: [] }))
+    const sym = symbol.toUpperCase();
+    // Ratings + grades from FMP; price target from Price Target Consensus API (see developer docs)
+    const [snapshotRes, consensusRes, priceTargetRes] = await Promise.all([
+      axios.get(`${BASE}/ratings-snapshot?symbol=${sym}&apikey=${FMP_API_KEY}`).catch(() => ({ data: [] })),
+      axios.get(`${BASE}/grades-consensus?symbol=${sym}&apikey=${FMP_API_KEY}`).catch(() => ({ data: [] })),
+      axios.get(`${BASE}/price-target-consensus?symbol=${sym}&apikey=${FMP_API_KEY}`).catch(() => ({ data: [] }))
     ]);
 
-    const grades = gradesRes.data?.[0];
-    const target = targetRes.data?.[0];
+    const snapshot = snapshotRes.data?.[0];
+    const consensus = consensusRes.data?.[0];
+    const pt = priceTargetRes.data?.[0];
 
-    // Determine overall rating from latest grade
-    let overallRating = 'Not available';
-    if (grades?.ratingScore) {
-      const score = grades.ratingScore;
-      if (score >= 4.5) overallRating = 'Strong Buy';
-      else if (score >= 3.5) overallRating = 'Buy';
-      else if (score >= 2.5) overallRating = 'Hold';
-      else if (score >= 1.5) overallRating = 'Sell';
-      else overallRating = 'Strong Sell';
-    }
+    // Get overall rating from snapshot or consensus
+    let overallRating = snapshot?.rating || consensus?.consensus || 'Not available';
 
-    // Extract recommendation from grade
-    let recommendation = overallRating;
-    if (grades?.ratingRecommendation) {
-      recommendation = grades.ratingRecommendation;
-    }
+    // Get analyst counts from consensus
+    const buyCount = consensus?.buy || 0;
+    const holdCount = consensus?.hold || 0;
+    const sellCount = consensus?.sell || 0;
+    const strongBuyCount = consensus?.strongBuy || 0;
+    const strongSellCount = consensus?.strongSell || 0;
 
-    // Parse buy/hold/sell counts from grade change info if available
-    let buyCount: number | undefined;
-    let holdCount: number | undefined;
-    let sellCount: number | undefined;
+    const numberOfAnalysts = buyCount + holdCount + sellCount + strongBuyCount + strongSellCount;
 
-    if (grades?.ratingDetails) {
-      buyCount = grades.ratingDetails.RatingDetailsBuy?.length || 0;
-      holdCount = grades.ratingDetails.RatingDetailsHold?.length || 0;
-      sellCount = grades.ratingDetails.RatingDetailsSell?.length || 0;
-    }
+    // Determine recommendation based on consensus
+    let recommendation = consensus?.consensus || overallRating;
 
-    const numberOfAnalysts =
-      buyCount && holdCount && sellCount ? buyCount + holdCount + sellCount : undefined;
+    const priceTarget = pt?.targetConsensus ?? pt?.targetMedian ?? null;
 
     const rating: AnalystRating = {
-      symbol: symbol.toUpperCase(),
+      symbol: sym,
       overallRating,
-      priceTarget: target?.priceTarget ? parseFloat(target.priceTarget) : undefined,
-      numberOfAnalysts,
-      buyCount,
-      holdCount,
-      sellCount,
+      priceTarget: priceTarget != null ? Number(priceTarget) : undefined,
+      numberOfAnalysts: numberOfAnalysts > 0 ? numberOfAnalysts : undefined,
+      buyCount: buyCount > 0 ? buyCount : undefined,
+      holdCount: holdCount > 0 ? holdCount : undefined,
+      sellCount: sellCount > 0 ? sellCount : undefined,
       recommendation,
-      source: 'FMP Starter'
+      source: 'FMP (ratings-snapshot, grades-consensus, price-target-consensus)'
     };
 
     return rating;
