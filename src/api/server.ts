@@ -8,6 +8,7 @@ import { formatStockCheckup } from '../formatters/checkupFormatter';
 import { formatNoobCheckup } from '../formatters/noobCheckupFormatter';
 import { generateDailyNewsDigest } from '../agents/dailyNewsDigest';
 import { formatDailyDigest } from '../formatters/dailyDigestFormatter';
+import { generateStockSnapshot } from '../services/stockSnapshot';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -199,6 +200,69 @@ app.get('/api/digest', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// STOCK SNAPSHOT - Clean JSON: vs S&P 500, valuation, fundamentals
+// GET  /api/snapshot/:ticker
+// POST /api/snapshot (iOS app) - body: { ticker, type? }
+// ============================================================================
+app.get('/api/snapshot/:ticker', async (req: Request, res: Response) => {
+  try {
+    const { ticker } = req.params;
+
+    if (!ticker || typeof ticker !== 'string') {
+      return res.status(400).json({ error: 'Missing or invalid ticker symbol' });
+    }
+
+    if (!/^[A-Za-z]{1,5}$/.test(ticker)) {
+      return res.status(400).json({ error: 'Invalid ticker format. Must be 1-5 letters.' });
+    }
+
+    console.log(`[SNAPSHOT] ${ticker.toUpperCase()}`);
+
+    const snapshot = await generateStockSnapshot(ticker.toUpperCase());
+
+    res.json({
+      success: true,
+      data: snapshot,
+      timestamp: snapshot.timestamp
+    });
+  } catch (err: any) {
+    console.error('[SNAPSHOT ERROR]', err.message);
+    res.status(500).json({ error: `Snapshot failed: ${err.message}` });
+  }
+});
+
+// POST /api/snapshot - iOS App adapter (same pattern as holding-checkup)
+app.post('/api/snapshot', async (req: Request, res: Response) => {
+  try {
+    const { ticker, type } = req.body;
+
+    if (!ticker || typeof ticker !== 'string') {
+      return res.status(400).json({ error: 'Missing or invalid "ticker" parameter' });
+    }
+
+    if (!/^[A-Za-z]{1,5}$/.test(ticker)) {
+      return res.status(400).json({ error: 'Invalid ticker format. Must be 1-5 letters.' });
+    }
+
+    const symbol = ticker.toUpperCase();
+    console.log(`[SNAPSHOT] ${symbol} (iOS)`);
+
+    const snapshot = await generateStockSnapshot(symbol);
+
+    res.json({
+      success: true,
+      snapshot: snapshot,
+      symbol,
+      assetType: type || 'stock',
+      timestamp: snapshot.timestamp
+    });
+  } catch (err: any) {
+    console.error('[SNAPSHOT ERROR]', err.message);
+    res.status(500).json({ error: `Snapshot failed: ${err.message}` });
+  }
+});
+
+// ============================================================================
 // NEWS ENDPOINT - News for a specific ticker
 // ============================================================================
 app.get('/api/news/:ticker', async (req: Request, res: Response) => {
@@ -286,6 +350,8 @@ app.listen(PORT, () => {
   console.log(`   GET    /api/checkup/:ticker      - Deep dive stock analysis`);
   console.log(`   POST   /api/holding-checkup       - App proxy (ticker, type?, name?)`);
   console.log(`   GET    /api/news/:ticker         - News for a specific stock`);
+  console.log(`   GET    /api/snapshot/:ticker     - Stock snapshot (vs S&P 500, valuation, fundamentals)`);
+  console.log(`   POST   /api/snapshot             - iOS app (body: { ticker, type? })`);
   console.log(`   GET    /api/digest               - Daily market digest`);
   console.log(`   GET    /health                   - App health check (status: healthy)`);
   console.log(`   GET    /api/health               - Health check (status: ok)\n`);

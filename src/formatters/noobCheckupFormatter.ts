@@ -20,9 +20,7 @@ export function formatNoobCheckup(checkup: StockCheckup): string {
 
   let out = '';
 
-  out += `**${symbol} — Check-up (plain English)**\n\n`;
-
-  // One-line takeaway
+  out += `${symbol} Check-up\n\n`;
   if (d?.overallInterpretation) {
     out += `${d.overallInterpretation}\n\n`;
   }
@@ -32,12 +30,11 @@ export function formatNoobCheckup(checkup: StockCheckup): string {
   const sentiment = news?.sentiment || 'neutral';
   const rating = a?.consensusRating || 'unknown';
   const { headline, meaning } = getNoobDreamOrDanger(valuation, sentiment, rating);
-  out += `**The big picture**\n`;
+  out += `The big picture\n`;
   out += `${headline}\n`;
   out += `${meaning}\n\n`;
 
-  // Numbers that matter
-  out += `**Key numbers**\n`;
+  out += `Key numbers\n`;
   if (h?.overallScore != null) {
     const { label, explanation } = getHealthScoreLabel(h.overallScore);
     out += `Health score: ${h.overallScore}/100 (${label}) — ${explanation}\n`;
@@ -54,54 +51,48 @@ export function formatNoobCheckup(checkup: StockCheckup): string {
   if (a?.priceTarget != null) out += ` · Analysts’ average target: $${a.priceTarget.toFixed(0)}`;
   out += '\n\n';
 
-  // Is the price fair? (short)
   if (layers.expectations?.currentMultiple) {
     const pe = layers.expectations.currentMultiple.value;
     const v = getValuationLabel(pe);
-    out += `**Is the price fair?**\n`;
+    out += `Is the price fair?\n`;
     out += `${v.assessment}\n`;
     out += `${v.explanation}\n\n`;
   }
 
-  // Vs S&P 500 (market comparison)
   const sp500 = layers.sp500Comparison;
   if (sp500?.summary && !sp500.summary.includes('Error')) {
-    out += `**Vs the market (S&P 500)**\n`;
+    out += `Vs the market\n`;
     out += `${sp500.summary}\n\n`;
   } else if (sp500?.outperforming != null && sp500?.outperformanceAmount != null) {
-    out += `**Vs the market (S&P 500)**\n`;
+    out += `Vs the market\n`;
     out += sp500.outperforming
       ? `This stock is beating the S&P 500 by ${Math.abs(sp500.outperformanceAmount).toFixed(1)}% so far this year.\n\n`
       : `This stock is trailing the S&P 500 by ${Math.abs(sp500.outperformanceAmount).toFixed(1)}% so far this year.\n\n`;
   }
 
-  // Growth in plain English
   if (f?.epsGrowth != null || f?.revenueGrowth != null) {
-    out += `**Growth**\n`;
+    out += `Growth\n`;
     if (f.epsGrowth != null) out += `Earnings per share: ${f.epsGrowth.yoy >= 0 ? '+' : ''}${f.epsGrowth.yoy?.toFixed(1)}% vs last year\n`;
     if (f.revenueGrowth != null) out += `Revenue: ${f.revenueGrowth.yoy >= 0 ? '+' : ''}${f.revenueGrowth.yoy}% vs last year\n`;
     out += '\n';
   }
 
-  // What could go wrong
   if (risk?.keyRisks?.length) {
-    out += `**What to watch**\n`;
-    risk.keyRisks.slice(0, 3).forEach((r: string) => { out += `· ${r}\n`; });
+    out += `What to watch\n`;
+    risk.keyRisks.slice(0, 3).forEach((r: string) => { out += `• ${r}\n`; });
     out += '\n';
   }
 
-  // So... what now?
   if (d?.recommendations?.length) {
-    out += `**So… what now?**\n`;
+    out += `So… what now?\n`;
     d.recommendations.slice(0, 6).forEach((rec: string) => {
-      out += `→ ${simplifyText(rec, 'noob')}\n`;
+      out += `• ${simplifyText(rec, 'noob')}\n`;
     });
     out += '\n';
   }
 
-  // Recent context (news)
   if (news?.storyline) {
-    out += `**Recent context**\n`;
+    out += `Recent context\n`;
     const first = news.storyline.split(/\n\n/)[0];
     out += `${first}\n`;
     if (news.sentiment) {
@@ -110,6 +101,6 @@ export function formatNoobCheckup(checkup: StockCheckup): string {
     }
   }
 
-  out += `\n💡 Remember: Past performance ≠ future. Diversify. Only invest what you can afford to lose.\n`;
+  out += `\nPast performance ≠ future returns. Diversify. Invest only what you can afford to lose.\n`;
   return out;
 }

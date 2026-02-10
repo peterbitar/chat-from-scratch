@@ -14,16 +14,14 @@ export function formatStockCheckup(checkup: StockCheckup): string {
 
   let out = '';
 
-  // —— Header ——
-  out += `**${symbol} — Stock Checkup**\n\n`;
-
-  // —— One-line takeaway (most important) ——
+  // Header — symbol and one-line takeaway first
+  out += `${symbol} Stock Checkup\n\n`;
   if (d?.overallInterpretation) {
     out += `${d.overallInterpretation}\n\n`;
   }
 
-  // —— Key metrics only: score, rating, consensus, buy/hold/sell ——
-  out += `**The numbers that matter**\n`;
+  // Key metrics — score, rating, consensus
+  out += `The numbers that matter\n`;
   const scoreLine: string[] = [];
   if (h?.overallScore != null) scoreLine.push(`Score ${h.overallScore}/100`);
   if (h?.scoreLabel) scoreLine.push(`(${h.scoreLabel})`);
@@ -33,12 +31,12 @@ export function formatStockCheckup(checkup: StockCheckup): string {
   const hold = a?.holdCount ?? 0;
   const sell = a?.sellCount ?? 0;
   if (buy + hold + sell > 0) {
-    out += `Recommendations: ${buy} Buy · ${hold} Hold · ${sell} Sell\n`;
+    out += `${buy} Buy · ${hold} Hold · ${sell} Sell\n`;
   }
   out += '\n';
 
-  // —— Price & valuation in plain language ——
-  out += `**Price & valuation**\n`;
+  // Price & valuation
+  out += `Price & valuation\n`;
   if (s?.currentPrice != null) {
     out += `Trading at $${s.currentPrice.toFixed(2)}`;
     if (a?.priceTarget != null) {
@@ -67,19 +65,25 @@ export function formatStockCheckup(checkup: StockCheckup): string {
       out += `Vs S&P 500: ${sp500.summary}\n`;
     } else if (sp500.ytdPerformance != null && sp500.sp500YTD != null) {
       const stockYtd = `${sp500.ytdPerformance >= 0 ? '+' : ''}${sp500.ytdPerformance.toFixed(1)}%`;
+      const stock1Y = sp500.oneYearPerformance != null ? `${sp500.oneYearPerformance >= 0 ? '+' : ''}${sp500.oneYearPerformance.toFixed(1)}%` : '—';
+      const stock5Y = sp500.fiveYearPerformance != null ? `${sp500.fiveYearPerformance >= 0 ? '+' : ''}${sp500.fiveYearPerformance.toFixed(1)}%` : '—';
       const indexYtd = `${sp500.sp500YTD >= 0 ? '+' : ''}${sp500.sp500YTD.toFixed(1)}%`;
-      out += `Vs S&P 500: Stock YTD ${stockYtd}, 1Y ${sp500.oneYearPerformance != null ? (sp500.oneYearPerformance >= 0 ? '+' : '') + sp500.oneYearPerformance.toFixed(1) + '%' : '—'}, 5Y ${sp500.fiveYearPerformance != null ? (sp500.fiveYearPerformance >= 0 ? '+' : '') + sp500.fiveYearPerformance.toFixed(1) + '%' : '—'} | Index YTD ${indexYtd}, 1Y ${sp500.sp500OneYear != null ? (sp500.sp500OneYear >= 0 ? '+' : '') + sp500.sp500OneYear.toFixed(1) + '%' : '—'}, 5Y ${sp500.sp500FiveYear != null ? (sp500.sp500FiveYear >= 0 ? '+' : '') + sp500.sp500FiveYear.toFixed(1) + '%' : '—'}\n`;
+      const index1Y = sp500.sp500OneYear != null ? `${sp500.sp500OneYear >= 0 ? '+' : ''}${sp500.sp500OneYear.toFixed(1)}%` : '—';
+      const index5Y = sp500.sp500FiveYear != null ? `${sp500.sp500FiveYear >= 0 ? '+' : ''}${sp500.sp500FiveYear.toFixed(1)}%` : '—';
+      out += `Vs S&P 500\n`;
+      out += `Stock: YTD ${stockYtd}, 1Y ${stock1Y}, 5Y ${stock5Y}\n`;
+      out += `Index: YTD ${indexYtd}, 1Y ${index1Y}, 5Y ${index5Y}\n`;
       if (sp500.outperforming != null && sp500.outperformanceAmount != null) {
         out += sp500.outperforming
-          ? `Outperforming the S&P 500 by ${Math.abs(sp500.outperformanceAmount).toFixed(1)}% YTD\n`
-          : `Underperforming the S&P 500 by ${Math.abs(sp500.outperformanceAmount).toFixed(1)}% YTD\n`;
+          ? `Outperforming by ${Math.abs(sp500.outperformanceAmount).toFixed(1)}% YTD\n`
+          : `Underperforming by ${Math.abs(sp500.outperformanceAmount).toFixed(1)}% YTD\n`;
       }
     }
   }
   out += '\n';
 
-  // —— Growth & profitability (story, not raw scores) ——
-  out += `**Growth & profitability**\n`;
+  // Growth & profitability
+  out += `Growth & profitability\n`;
   const growthParts: string[] = [];
   if (f?.epsGrowth != null && f.epsGrowth.yoy != null) {
     growthParts.push(`EPS growth ${f.epsGrowth.yoy >= 0 ? '+' : ''}${f.epsGrowth.yoy.toFixed(1)}% YoY`);
@@ -93,23 +97,23 @@ export function formatStockCheckup(checkup: StockCheckup): string {
   if (exp?.impliedExpectations) out += `${exp.impliedExpectations}\n`;
   out += '\n';
 
-  // —— Risks (short, actionable) ——
+  // Risks
   if (risk?.keyRisks?.length) {
-    out += `**What to watch**\n`;
-    risk.keyRisks.slice(0, 3).forEach((r) => { out += `· ${r}\n`; });
+    out += `What to watch\n`;
+    risk.keyRisks.slice(0, 3).forEach((r) => { out += `• ${r}\n`; });
     out += '\n';
   }
 
-  // —— Bottom line ——
+  // Bottom line
   if (d?.recommendations?.length) {
-    out += `**Bottom line**\n`;
-    d.recommendations.slice(0, 6).forEach((rec: string) => { out += `→ ${rec}\n`; });
+    out += `Bottom line\n`;
+    d.recommendations.slice(0, 6).forEach((rec: string) => { out += `• ${rec}\n`; });
     out += '\n';
   }
 
-  // —— News (one paragraph) ——
+  // News
   if (news?.storyline) {
-    out += `**Recent context**\n`;
+    out += `Recent context\n`;
     const first = news.storyline.split(/\n\n/)[0];
     out += `${first}\n`;
   }
