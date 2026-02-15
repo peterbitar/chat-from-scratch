@@ -27,11 +27,8 @@ async function main() {
     }
     console.log('📋 What Changed (max 3)\n');
     feed.cards.forEach((card, i) => {
-      console.log(`${i + 1}. ${card.headline}`);
-      console.log(`   ${card.explanation}`);
-      console.log(`   What it means: ${card.whatItMeans}`);
-      if (card.riskNote) console.log(`   Risk: ${card.riskNote}`);
-      if (card.contextLine) console.log(`   Context: ${card.contextLine}`);
+      console.log(`${i + 1}. ${card.title}`);
+      console.log(card.content.replace(/\*\*/g, '').replace(/\n/g, '\n   '));
       console.log('');
     });
     if (withJson) console.log(JSON.stringify(feed, null, 2));

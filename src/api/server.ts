@@ -18,6 +18,7 @@ import { generateDominantSignalFeed } from '../services/dominantSignalFeed';
 import { generateRetailFeed } from '../services/retailFeed';
 import { getEarningsRecap, earningsRecapRelevance } from '../services/earningsRecap';
 import { formatEarningsRecap, formatEarningsRecapAsCard } from '../formatters/earningsRecapFormatter';
+import { generateEarningsRecapCard } from '../services/feedCardGenerator';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -530,7 +531,11 @@ app.get('/api/earnings-recap/:ticker', async (req: Request, res: Response) => {
       significantPriceMovePostEarnings: daily?.volatilityAlertFlag ?? false
     });
     const formatted = formatEarningsRecap(recap);
-    const card = relevance.shouldShow ? formatEarningsRecapAsCard(recap) : null;
+    let card: { title: string; content: string } | null = null;
+    if (relevance.shouldShow) {
+      const llmCard = await generateEarningsRecapCard(recap);
+      card = llmCard ?? formatEarningsRecapAsCard(recap);
+    }
     res.json({
       success: true,
       ticker,
