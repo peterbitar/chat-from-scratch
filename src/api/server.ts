@@ -561,6 +561,48 @@ app.get('/api/earnings-recap/:ticker', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// EARNINGS RECAP FEED - Same response shape as feed API only (marketMood, cards, allStable, timestamp)
+// GET /api/earnings-recap-feed/:ticker
+// ============================================================================
+app.get('/api/earnings-recap-feed/:ticker', async (req: Request, res: Response) => {
+  try {
+    const raw = req.params.ticker;
+    const ticker = (Array.isArray(raw) ? raw[0] : raw || '').toString().toUpperCase();
+    if (!/^[A-Za-z]{1,5}$/.test(ticker)) {
+      return res.status(400).json({ error: 'Invalid ticker symbol' });
+    }
+    const recap = await getEarningsRecap(ticker);
+    if (!recap) {
+      return res.json({
+        success: true,
+        marketMood: 'No earnings recap available for this symbol.',
+        cards: [],
+        allStable: true,
+        timestamp: new Date().toISOString()
+      });
+    }
+    const llmCard = await generateEarningsRecapCard(recap);
+    const rawCard = llmCard ?? formatEarningsRecapAsCard(recap);
+    const card = {
+      symbol: ticker,
+      headline: rawCard.title,
+      title: rawCard.title,
+      content: rawCard.content
+    };
+    res.json({
+      success: true,
+      marketMood: 'Last quarter earnings recap.',
+      cards: [card],
+      allStable: false,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error('[EARNINGS-RECAP-FEED ERROR]', err.message);
+    res.status(500).json({ error: `Earnings recap feed failed: ${err.message}` });
+  }
+});
+
+// ============================================================================
 // NEWS ENDPOINT - News for a specific ticker
 // ============================================================================
 app.get('/api/news/:ticker', async (req: Request, res: Response) => {
@@ -657,6 +699,7 @@ app.listen(PORT, () => {
   console.log(`   GET    /api/feed                - Feed (?symbols=AAPL,MSFT & ?mode=retail for B2C calm view)`);
   console.log(`   POST   /api/feed                - Feed (body: { symbols: [] }, mode: 'retail' for B2C)`);
   console.log(`   GET    /api/earnings-recap/:ticker - Last earnings quick recap (when relevant)`);
+  console.log(`   GET    /api/earnings-recap-feed/:ticker - Earnings recap in feed shape only (marketMood, cards, allStable, timestamp)`);
   console.log(`   GET    /api/digest               - Daily market digest`);
   console.log(`   GET    /health                   - App health check (status: healthy)`);
   console.log(`   GET    /api/health               - Health check (status: ok)\n`);
