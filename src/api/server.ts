@@ -523,7 +523,7 @@ app.get('/api/earnings-recap/:ticker', async (req: Request, res: Response) => {
     }
     const recap = await getEarningsRecap(ticker);
     if (!recap) {
-      return res.json({ success: true, ticker, recap: null, shouldShow: false, formatted: null, card: null });
+      return res.json({ success: true, ticker, recap: null, shouldShow: false, formatted: null, card: null, cards: [] });
     }
     const daily = await runDailyCheck(ticker).catch(() => null);
     const relevance = earningsRecapRelevance(recap, {
@@ -541,6 +541,8 @@ app.get('/api/earnings-recap/:ticker', async (req: Request, res: Response) => {
       title: rawCard.title,
       content: rawCard.content
     };
+    // Feed returns { cards: RetailCard[] }; earnings returns same so app can use cards[0] for both
+    const cards = [card];
     res.json({
       success: true,
       ticker,
@@ -549,7 +551,8 @@ app.get('/api/earnings-recap/:ticker', async (req: Request, res: Response) => {
       daysSinceEarnings: relevance.daysSinceEarnings,
       reason: relevance.reason,
       formatted: formatted,
-      card
+      card,
+      cards
     });
   } catch (err: any) {
     console.error('[EARNINGS-RECAP ERROR]', err.message);
