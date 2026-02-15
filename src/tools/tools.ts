@@ -4,6 +4,10 @@ import { getNewsUpdate } from './newsSentiment';
 import { getEarningsCalendar } from './earningsCalendar';
 import { getAnalystRatings } from './analystRatings';
 import { getSP500Comparison } from './sp500Comparison';
+import { runIndustryComparison } from '../services/industryComparison';
+import { formatIndustryComparison } from '../formatters/industryComparisonFormatter';
+import { runDailyCheck } from '../services/dailyCheck';
+import { formatDailyCheck } from '../formatters/dailyCheckFormatter';
 
 export const tools = [
   {
@@ -104,6 +108,44 @@ export const tools = [
       }
     },
     func: getSP500Comparison
+  },
+  {
+    name: 'getIndustryComparison',
+    type: 'function',
+    function: {
+      name: 'getIndustryComparison',
+      description: 'Institutional-style industry comparison: industry snapshot (median P/E, growth, ROE, debt), stock vs industry, and verdict (Premium justified / Fair / Premium stretched / Discount). Use when user asks if a stock is cheap/expensive vs peers or about valuation relative to industry.',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Ticker symbol (e.g., AAPL)' }
+        },
+        required: ['symbol']
+      }
+    },
+    func: async ({ symbol }: { symbol: string }) => {
+      const result = await runIndustryComparison(symbol);
+      return { ...result, report: formatIndustryComparison(result) };
+    }
+  },
+  {
+    name: 'getDailyCheck',
+    type: 'function',
+    function: {
+      name: 'getDailyCheck',
+      description: 'Daily re-rating monitor: thesis status (Improving/Stable/Deteriorating), what changed today, risk alerts. Uses EPS/revenue revisions, price vs fundamentals divergence, valuation compression, and risk signals. Best for tracking portfolio positions daily.',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Ticker symbol (e.g., AAPL)' }
+        },
+        required: ['symbol']
+      }
+    },
+    func: async ({ symbol }: { symbol: string }) => {
+      const result = await runDailyCheck(symbol);
+      return { ...result, report: formatDailyCheck(result) };
+    }
   },
   // ✅ Native web search tool
   {

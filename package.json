@@ -8,7 +8,10 @@
     "start": "node dist/api/server.js",
     "dev": "ts-node src/index.ts",
     "serve": "ts-node src/api/server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "industry-comparison": "ts-node scripts/industry-comparison-cli.ts",
+    "daily-check": "ts-node scripts/daily-check-cli.ts",
+    "feed": "ts-node scripts/feed-cli.ts"
   },
   "keywords": [],
   "author": "",

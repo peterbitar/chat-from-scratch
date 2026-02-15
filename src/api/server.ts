@@ -9,6 +9,15 @@ import { formatNoobCheckup } from '../formatters/noobCheckupFormatter';
 import { generateDailyNewsDigest } from '../agents/dailyNewsDigest';
 import { formatDailyDigest } from '../formatters/dailyDigestFormatter';
 import { generateStockSnapshot } from '../services/stockSnapshot';
+import { runIndustryComparison } from '../services/industryComparison';
+import { formatIndustryComparison } from '../formatters/industryComparisonFormatter';
+import { runDailyCheck } from '../services/dailyCheck';
+import { formatDailyCheck } from '../formatters/dailyCheckFormatter';
+import { generateRabbitStory } from '../services/rabbitStoryEngine';
+import { generateDominantSignalFeed } from '../services/dominantSignalFeed';
+import { generateRetailFeed } from '../services/retailFeed';
+import { getEarningsRecap, earningsRecapRelevance } from '../services/earningsRecap';
+import { formatEarningsRecap, formatEarningsRecapAsCard } from '../formatters/earningsRecapFormatter';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -263,6 +272,282 @@ app.post('/api/snapshot', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// INDUSTRY COMPARISON - Per-company: industry snapshot, stock vs industry, verdict
+// GET  /api/industry-comparison/:ticker
+// POST /api/industry-comparison (body: { ticker } or { symbols: string[] })
+// ============================================================================
+app.get('/api/industry-comparison/:ticker', async (req: Request, res: Response) => {
+  try {
+    const ticker = Array.isArray(req.params.ticker) ? req.params.ticker[0] : req.params.ticker;
+    const json = req.query.json === 'true';
+
+    if (!ticker || typeof ticker !== 'string' || !/^[A-Za-z]{1,5}$/.test(ticker)) {
+      return res.status(400).json({ error: 'Missing or invalid ticker symbol' });
+    }
+
+    const symbol = ticker.toUpperCase();
+    console.log(`[INDUSTRY-COMPARISON] ${symbol}`);
+
+    const result = await runIndustryComparison(symbol);
+
+    if (json) {
+      return res.json({ success: true, data: result, timestamp: result.timestamp });
+    }
+
+    res.json({
+      success: true,
+      ticker: symbol,
+      report: formatIndustryComparison(result),
+      verdict: result.verdict,
+      timestamp: result.timestamp
+    });
+  } catch (err: any) {
+    console.error('[INDUSTRY-COMPARISON ERROR]', err.message);
+    res.status(500).json({ error: `Industry comparison failed: ${err.message}` });
+  }
+});
+
+app.post('/api/industry-comparison', async (req: Request, res: Response) => {
+  try {
+    const { ticker, symbols } = req.body;
+    const list: string[] = symbols && Array.isArray(symbols)
+      ? (symbols as string[]).map((s: string) => String(s).toUpperCase()).filter((s: string) => /^[A-Za-z]{1,5}$/.test(s))
+      : ticker && typeof ticker === 'string' && /^[A-Za-z]{1,5}$/.test(ticker)
+        ? [ticker.toUpperCase()]
+        : [];
+
+    if (list.length === 0) {
+      return res.status(400).json({ error: 'Missing or invalid "ticker" or "symbols" in body' });
+    }
+
+    console.log(`[INDUSTRY-COMPARISON] batch: ${list.join(', ')}`);
+
+    const results = await Promise.all(list.map((s) => runIndustryComparison(s)));
+    const reports = results.map((r) => formatIndustryComparison(r));
+
+    res.json({
+      success: true,
+      symbols: list,
+      results: results.map((r) => ({ symbol: r.symbol, verdict: r.verdict, verdictReason: r.verdictReason })),
+      reports,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error('[INDUSTRY-COMPARISON ERROR]', err.message);
+    res.status(500).json({ error: `Industry comparison failed: ${err.message}` });
+  }
+});
+
+// ============================================================================
+// DAILY CHECK - Re-rating monitor: thesis status, what changed, risk alerts
+// GET  /api/daily-check/:ticker
+// POST /api/daily-check (body: { ticker } or { symbols: string[] })
+// ============================================================================
+app.get('/api/daily-check/:ticker', async (req: Request, res: Response) => {
+  try {
+    const ticker = Array.isArray(req.params.ticker) ? req.params.ticker[0] : req.params.ticker;
+    const json = req.query.json === 'true';
+    const story = req.query.story === 'true';
+
+    if (!ticker || typeof ticker !== 'string' || !/^[A-Za-z]{1,5}$/.test(ticker)) {
+      return res.status(400).json({ error: 'Missing or invalid ticker symbol' });
+    }
+
+    const symbol = ticker.toUpperCase();
+    console.log(`[DAILY-CHECK] ${symbol}${story ? ' (story)' : ''}`);
+
+    const result = await runDailyCheck(symbol);
+
+    if (json) {
+      return res.json({ success: true, data: result, timestamp: result.timestamp });
+    }
+
+    const payload: Record<string, unknown> = {
+      success: true,
+      ticker: symbol,
+      thesisStatus: result.thesisStatus,
+      baseScore: result.baseScore,
+      dailyPulse: result.dailyPulse,
+      confidence: result.confidence,
+      revisions: result.revisions,
+      valuation: result.valuation,
+      price: result.price,
+      relativeStrength: result.relativeStrength,
+      setupType: result.setupType,
+      positioning: result.positioning,
+      timeHorizonBias: result.timeHorizonBias,
+      betaVsSp500: result.betaVsSp500,
+      sectorMedianNDtoEbitda: result.sectorMedianNDtoEbitda,
+      signal: result.signal,
+      pillars: result.pillars,
+      structuralRisk: result.structuralRisk,
+      flowRisk: result.flowRisk,
+      clusterRiskDetected: result.clusterRiskDetected,
+      clusterInteractionNote: result.clusterInteractionNote,
+      sensitivityNote: result.sensitivityNote,
+      riskAlerts: result.riskAlerts,
+      report: formatDailyCheck(result),
+      timestamp: result.timestamp
+    };
+    if (story) {
+      payload.rabbitStory = await generateRabbitStory(result);
+    }
+    res.json(payload);
+  } catch (err: any) {
+    console.error('[DAILY-CHECK ERROR]', err.message);
+    res.status(500).json({ error: `Daily check failed: ${err.message}` });
+  }
+});
+
+app.post('/api/daily-check', async (req: Request, res: Response) => {
+  try {
+    const { ticker, symbols, story: withStory } = req.body;
+    const list: string[] = symbols && Array.isArray(symbols)
+      ? (symbols as string[]).map((s: string) => String(s).toUpperCase()).filter((s: string) => /^[A-Za-z]{1,5}$/.test(s))
+      : ticker && typeof ticker === 'string' && /^[A-Za-z]{1,5}$/.test(ticker)
+        ? [ticker.toUpperCase()]
+        : [];
+
+    if (list.length === 0) {
+      return res.status(400).json({ error: 'Missing or invalid "ticker" or "symbols" in body' });
+    }
+
+    console.log(`[DAILY-CHECK] batch: ${list.join(', ')}${withStory ? ' (story)' : ''}`);
+
+    const results = await Promise.all(list.map((s) => runDailyCheck(s)));
+    const rabbitStories = withStory ? await Promise.all(results.map((r) => generateRabbitStory(r))) : [];
+
+    const payload: Record<string, unknown> = {
+      success: true,
+      symbols: list,
+      results: results.map((r) => ({
+        symbol: r.symbol,
+        thesisStatus: r.thesisStatus,
+        baseScore: r.baseScore,
+        dailyPulse: r.dailyPulse,
+        confidence: r.confidence,
+        price: r.price,
+        relativeStrength: r.relativeStrength,
+        setupType: r.setupType,
+        positioning: r.positioning,
+        timeHorizonBias: r.timeHorizonBias,
+        betaVsSp500: r.betaVsSp500,
+        signal: r.signal,
+        structuralRisk: r.structuralRisk,
+        flowRisk: r.flowRisk,
+        clusterRiskDetected: r.clusterRiskDetected,
+        riskAlerts: r.riskAlerts
+      })),
+      reports: results.map((r) => formatDailyCheck(r)),
+      timestamp: new Date().toISOString()
+    };
+    if (withStory) {
+      payload.rabbitStories = rabbitStories;
+    }
+    res.json(payload);
+  } catch (err: any) {
+    console.error('[DAILY-CHECK ERROR]', err.message);
+    res.status(500).json({ error: `Daily check failed: ${err.message}` });
+  }
+});
+
+// ============================================================================
+// DOMINANT SIGNAL FEED - One card per stock, highest-severity signal only
+// GET  /api/feed?symbols=AAPL,MSFT,TSLA
+// POST /api/feed (body: { symbols: [] })
+// ============================================================================
+app.get('/api/feed', async (req: Request, res: Response) => {
+  try {
+    const raw = req.query.symbols;
+    const retail = req.query.mode === 'retail';
+    const list: string[] = raw
+      ? (typeof raw === 'string' ? raw.split(',') : Array.isArray(raw) ? (raw as string[]) : [])
+          .map((s: string) => String(s).toUpperCase().trim())
+          .filter((s: string) => /^[A-Za-z]{1,5}$/.test(s))
+      : [];
+
+    if (list.length === 0) {
+      return res.status(400).json({ error: 'Missing or invalid "symbols" query (e.g. ?symbols=AAPL,MSFT)' });
+    }
+
+    console.log(`[FEED] symbols: ${list.join(', ')}${retail ? ' (retail)' : ''}`);
+    if (retail) {
+      const feed = await generateRetailFeed(list);
+      return res.json({ success: true, ...feed });
+    }
+    const feed = await generateDominantSignalFeed(list);
+    res.json({ success: true, ...feed });
+  } catch (err: any) {
+    console.error('[FEED ERROR]', err.message);
+    res.status(500).json({ error: `Feed failed: ${err.message}` });
+  }
+});
+
+app.post('/api/feed', async (req: Request, res: Response) => {
+  try {
+    const { symbols, mode } = req.body;
+    const retail = mode === 'retail';
+    const list: string[] = symbols && Array.isArray(symbols)
+      ? (symbols as string[]).map((s: string) => String(s).toUpperCase().trim()).filter((s: string) => /^[A-Za-z]{1,5}$/.test(s))
+      : [];
+
+    if (list.length === 0) {
+      return res.status(400).json({ error: 'Missing or invalid "symbols" in body' });
+    }
+
+    console.log(`[FEED] symbols: ${list.join(', ')}${retail ? ' (retail)' : ''}`);
+    if (retail) {
+      const feed = await generateRetailFeed(list);
+      return res.json({ success: true, ...feed });
+    }
+    const feed = await generateDominantSignalFeed(list);
+    res.json({ success: true, ...feed });
+  } catch (err: any) {
+    console.error('[FEED ERROR]', err.message);
+    res.status(500).json({ error: `Feed failed: ${err.message}` });
+  }
+});
+
+// ============================================================================
+// EARNINGS RECAP - Last quarter quick recap (anchor event for thesis)
+// GET /api/earnings-recap/:ticker
+// Only relevant within 7d of earnings, or revision spike / price move post-earnings
+// ============================================================================
+app.get('/api/earnings-recap/:ticker', async (req: Request, res: Response) => {
+  try {
+    const raw = req.params.ticker;
+    const ticker = (Array.isArray(raw) ? raw[0] : raw || '').toString().toUpperCase();
+    if (!/^[A-Za-z]{1,5}$/.test(ticker)) {
+      return res.status(400).json({ error: 'Invalid ticker symbol' });
+    }
+    const recap = await getEarningsRecap(ticker);
+    if (!recap) {
+      return res.json({ success: true, ticker, recap: null, shouldShow: false, formatted: null, card: null });
+    }
+    const daily = await runDailyCheck(ticker).catch(() => null);
+    const relevance = earningsRecapRelevance(recap, {
+      revisionSpikeAfterEarnings: daily?.majorRecalibrationFlag ?? false,
+      significantPriceMovePostEarnings: daily?.volatilityAlertFlag ?? false
+    });
+    const formatted = formatEarningsRecap(recap);
+    const card = relevance.shouldShow ? formatEarningsRecapAsCard(recap) : null;
+    res.json({
+      success: true,
+      ticker,
+      recap: relevance.recap,
+      shouldShow: relevance.shouldShow,
+      daysSinceEarnings: relevance.daysSinceEarnings,
+      reason: relevance.reason,
+      formatted: relevance.shouldShow ? formatted : null,
+      card
+    });
+  } catch (err: any) {
+    console.error('[EARNINGS-RECAP ERROR]', err.message);
+    res.status(500).json({ error: `Earnings recap failed: ${err.message}` });
+  }
+});
+
+// ============================================================================
 // NEWS ENDPOINT - News for a specific ticker
 // ============================================================================
 app.get('/api/news/:ticker', async (req: Request, res: Response) => {
@@ -352,6 +637,13 @@ app.listen(PORT, () => {
   console.log(`   GET    /api/news/:ticker         - News for a specific stock`);
   console.log(`   GET    /api/snapshot/:ticker     - Stock snapshot (vs S&P 500, valuation, fundamentals)`);
   console.log(`   POST   /api/snapshot             - iOS app (body: { ticker, type? })`);
+  console.log(`   GET    /api/industry-comparison/:ticker - Industry comparison (snapshot, vs industry, verdict)`);
+  console.log(`   POST   /api/industry-comparison  - Batch (body: { ticker } or { symbols: [] })`);
+  console.log(`   GET    /api/daily-check/:ticker  - Daily re-rating monitor (?story=true for Rabbit Story)`);
+  console.log(`   POST   /api/daily-check          - Batch (body: { ticker } or { symbols: [] }, story?: true)`);
+  console.log(`   GET    /api/feed                - Feed (?symbols=AAPL,MSFT & ?mode=retail for B2C calm view)`);
+  console.log(`   POST   /api/feed                - Feed (body: { symbols: [] }, mode: 'retail' for B2C)`);
+  console.log(`   GET    /api/earnings-recap/:ticker - Last earnings quick recap (when relevant)`);
   console.log(`   GET    /api/digest               - Daily market digest`);
   console.log(`   GET    /health                   - App health check (status: healthy)`);
   console.log(`   GET    /api/health               - Health check (status: ok)\n`);
