@@ -531,11 +531,9 @@ app.get('/api/earnings-recap/:ticker', async (req: Request, res: Response) => {
       significantPriceMovePostEarnings: daily?.volatilityAlertFlag ?? false
     });
     const formatted = formatEarningsRecap(recap);
-    let card: { title: string; content: string } | null = null;
-    if (relevance.shouldShow) {
-      const llmCard = await generateEarningsRecapCard(recap);
-      card = llmCard ?? formatEarningsRecapAsCard(recap);
-    }
+    // Always return a narrative card when we have recap (analysis and story, not just numbers)
+    const llmCard = await generateEarningsRecapCard(recap);
+    const card = llmCard ?? formatEarningsRecapAsCard(recap);
     res.json({
       success: true,
       ticker,
@@ -543,7 +541,7 @@ app.get('/api/earnings-recap/:ticker', async (req: Request, res: Response) => {
       shouldShow: relevance.shouldShow,
       daysSinceEarnings: relevance.daysSinceEarnings,
       reason: relevance.reason,
-      formatted: relevance.shouldShow ? formatted : null,
+      formatted: formatted,
       card
     });
   } catch (err: any) {
