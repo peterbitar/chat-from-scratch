@@ -8,6 +8,8 @@ import OpenAI from 'openai';
 import type { DailyCheckResult } from './dailyCheck';
 import type { PrimaryCard } from './primaryCardBuilder';
 import type { EarningsRecap } from './earningsRecap';
+import { shouldTriggerNewsScan } from './newsTriggerDetection';
+import { getNewsUpdate } from '../tools/newsSentiment';
 
 const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
 
@@ -16,7 +18,11 @@ export interface GeneratedCard {
   content: string;
 }
 
-function buildDataPayload(result: DailyCheckResult, card: PrimaryCard): string {
+function buildDataPayload(
+  result: DailyCheckResult,
+  card: PrimaryCard,
+  news?: { storyline: string; headlines: Array<{ title: string; sentiment: string }> }
+): string {
   const payload: Record<string, unknown> = {
     symbol: result.symbol,
     thesisStatus: result.thesisStatus,
@@ -45,12 +51,18 @@ function buildDataPayload(result: DailyCheckResult, card: PrimaryCard): string {
       narrativeSummary: result.earningsRecap.recap.narrativeSummary
     };
   }
+  if (news) {
+    payload.recentNews = {
+      storyline: news.storyline,
+      headlines: news.headlines.slice(0, 8).map((h) => ({ title: h.title, sentiment: h.sentiment }))
+    };
+  }
   return JSON.stringify(payload, null, 2);
 }
 
 /**
  * Generate a feed card (title, content) from DailyCheckResult + PrimaryCard using the LLM.
- * Content uses sections: **Here's what happened**, **Why investors care**, optional **Context**.
+ * Content flows naturally—no rigid sections, easy to digest.
  */
 export async function generateFeedCard(
   result: DailyCheckResult,
@@ -58,19 +70,30 @@ export async function generateFeedCard(
 ): Promise<GeneratedCard | null> {
   if (!OPENAI_KEY) return null;
 
-  const data = buildDataPayload(result, card);
-  const prompt = `You are writing a short feed card for retail investors. Use ONLY the structured data below. No invented facts.
+  let news: { storyline: string; headlines: Array<{ title: string; sentiment: string }> } | undefined;
+  const trigger = shouldTriggerNewsScan(result);
+  if (trigger.triggered) {
+    try {
+      const newsUpdate = await getNewsUpdate({ symbol: result.symbol, limit: 12 });
+      news = {
+        storyline: newsUpdate.storyline,
+        headlines: newsUpdate.headlines.map((h) => ({ title: h.title, sentiment: h.sentiment }))
+      };
+    } catch {
+      // News fetch failed; proceed without it
+    }
+  }
+
+  const data = buildDataPayload(result, card, news);
+  const prompt = `You are the Rabbit: a calm, insightful analyst telling a retail investor the story behind the numbers. Use ONLY the structured data below. No invented facts.${news ? ' Recent news (recentNews) is provided—weave it into the story where relevant to explain or contextualize the metrics.' : ''}
+
+Your job is to TELL THE STORY and INTERPRET THE MEANING—not just restate metrics. What do the numbers mean? What narrative do they suggest? Connect the dots for the reader.
 
 Output format (strict):
-1. title: One headline, e.g. "PYPL — Analysts Are More Optimistic"
-2. content: Markdown with these sections (only include sections that apply):
-   - **Here's what happened** — One or two sentences with the key numbers from the data.
-   - **Why investors care** — One sentence on what it means.
-   - **Key metric** — The main number (e.g. "+12.5% EPS (7d)") if relevant.
-   - **Context** — Only if earnings recap exists: one line about the last earnings report.
-   - **Risk note** — Only if risk alerts or confidence note apply.
+1. title: A creative, dynamic headline that captures the story. Full creative freedom—surprise the reader. No fixed templates.
+2. content: Markdown with sections. Generate your own section headings—no fixed labels (e.g. don't always use "Here's what happened", "Why investors care"). Create headings that fit the story. Use whatever order flows best. Be elaborative (2–4 sentences per section). Include what the data suggests: what shifted, what it means, context, risk—with headings you choose.
 
-Write in plain English. Calm, no jargon. Be specific: use the actual numbers from the data (EPS %, price %, revenue %, etc). Do not repeat the same info in multiple sections.
+Voice: Calm, insightful, conversational. Translate metrics into meaning. Avoid hype and jargon.
 
 Structured data:
 ${data}
@@ -117,16 +140,15 @@ export async function generateEarningsRecapCard(recap: EarningsRecap): Promise<G
     2
   );
 
-  const prompt = `You are writing a short earnings recap card for retail investors. Use ONLY the structured data below.
+  const prompt = `You are the Rabbit: a calm, insightful analyst telling a retail investor the story behind the earnings. Use ONLY the structured data below.
+
+Your job is to TELL THE STORY and INTERPRET THE MEANING—not just restate the beat/miss. What do the results suggest about the business? How does the market's reaction fit in?
 
 Output format (strict):
-1. title: One headline, e.g. "TSLA — Q1 FY2026 Earnings Recap"
-2. content: Markdown with these sections (include only what applies):
-   - **Here's what happened** — One or two sentences with the key numbers (revenue, EPS, beat/miss).
-   - **Why investors care** — One sentence on what it means.
-   - **Market reaction** — Only if marketReaction1to3DaysPct exists.
+1. title: A creative, dynamic headline that captures the earnings story. Full creative freedom—surprise the reader. No fixed templates.
+2. content: Markdown with sections. Generate your own section headings—no fixed labels. Create headings that fit the story. Use whatever order flows best. Be elaborative. Include the numbers, what they mean, and market reaction if relevant—with headings you choose.
 
-Write in plain English. Calm, no jargon. Be specific: use the actual numbers from the data.
+Voice: Calm, insightful, conversational. Translate numbers into meaning. Avoid hype and jargon.
 
 Structured data:
 ${data}
