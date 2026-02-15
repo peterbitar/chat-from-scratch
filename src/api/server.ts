@@ -533,7 +533,14 @@ app.get('/api/earnings-recap/:ticker', async (req: Request, res: Response) => {
     const formatted = formatEarningsRecap(recap);
     // Always return a narrative card when we have recap (analysis and story, not just numbers)
     const llmCard = await generateEarningsRecapCard(recap);
-    const card = llmCard ?? formatEarningsRecapAsCard(recap);
+    const rawCard = llmCard ?? formatEarningsRecapAsCard(recap);
+    // Same shape as feed API (RetailCard): symbol, headline, title, content — app can use same rendering for feed and earnings
+    const card = {
+      symbol: ticker,
+      headline: rawCard.title,
+      title: rawCard.title,
+      content: rawCard.content
+    };
     res.json({
       success: true,
       ticker,
