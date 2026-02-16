@@ -71,7 +71,7 @@ export const tools = [
     type: 'function',
     function: {
       name: 'getStockSnapshot',
-      description: 'Quick 3-metric snapshot: vs S&P 500 (3Y), valuation vs sector peers, fundamentals strength. Same data as stockSnapshot service. Use for "quick take", "snapshot", "at a glance", or when user wants a brief overview without full checkup.',
+      description: 'Quick 3-metric snapshot: vs S&P 500 (3Y), valuation vs industry peers, fundamentals strength. Same data as stockSnapshot service. Use for "quick take", "snapshot", "at a glance", or when user wants a brief overview without full checkup.',
       parameters: {
         type: 'object',
         properties: {
@@ -85,11 +85,13 @@ export const tools = [
       const vs = snapshot.vsSp500;
       const val = snapshot.valuation;
       const fund = snapshot.fundamentals;
+      const fundPillars =
+        fund?.pillars?.map((p) => `${p.name}: ${p.grade} (${p.value != null ? p.value + p.unit : 'N/A'})`).join(', ') ?? '';
       const report =
         `${snapshot.symbol} Snapshot\n\n` +
         `vs S&P 500 (3Y): ${vs?.label ?? 'N/A'} (stock ${vs?.stockReturn3Y != null ? vs.stockReturn3Y.toFixed(1) + '%' : 'N/A'}, S&P 500 ${vs?.sp500Return3Y != null ? vs.sp500Return3Y.toFixed(1) + '%' : 'N/A'})\n` +
-        `Valuation: ${val?.label ?? 'N/A'} (P/E ${val?.stockPE ?? 'N/A'}, sector peers median ${val?.sectorPeersMedianPE ?? 'N/A'})\n` +
-        `Fundamentals: ${fund?.label ?? 'N/A'} (${fund?.basedOn ?? 'N/A'})`;
+        `Valuation: ${val?.label ?? 'N/A'} (P/E ${val?.stockPE ?? 'N/A'}, industry P/E ${val?.industryPE ?? 'N/A'})\n` +
+        `Fundamentals: ${fund?.label ?? 'N/A'} (${fund?.score ?? 0}/${fund?.maxScore ?? 8}) — ${fundPillars || (fund?.basedOn ?? '4 pillars')}`;
       return { ...snapshot, report };
     }
   },

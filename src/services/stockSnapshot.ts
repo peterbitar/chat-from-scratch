@@ -2,22 +2,29 @@
  * Stock Snapshot API — Starter-safe
  * Returns clean JSON with 3 objective metrics per stock:
  * 1. vs S&P 500 (3Y total return)
- * 2. Valuation · Relative to sector
- * 3. Fundamentals · Strong/Mixed/Weak
+ * 2. Valuation · Relative to industry (from FMP industry-pe-snapshot / sector-pe-snapshot)
+ * 3. Fundamentals · 4 Pillars of Structural Quality (0–8 score)
  *
- * Uses tools as single source of truth: getSP500Comparison, getValuation, getIndustryPeerSymbols, getRatingsSnapshot.
+ * 4 Pillars: ROIC/ROE, Net Debt/EBITDA, FCF Stability, Revenue CAGR.
+ * Each pillar: Strong=2, Balanced=1, Weak=0. Total 0–8.
  */
 
 import { getSP500Comparison } from '../tools/sp500Comparison';
 import { getValuation } from '../tools/valuationExtractor';
-import { getIndustryPeerSymbols } from '../tools/industryPeers';
-import { getRatingsSnapshot } from '../tools/ratingsSnapshot';
 
 // --- Types ---
 
 export type VsSp500Label = 'Outperformed' | 'In line' | 'Underperformed';
-export type ValuationLabel = 'Above sector peers' | 'In line with sector peers' | 'Below sector peers' | 'Relative to sector';
-export type FundamentalsLabel = 'Strong' | 'Mixed' | 'Weak';
+export type ValuationLabel = 'Above industry peers' | 'In line with industry peers' | 'Below industry peers' | 'Relative to industry';
+export type PillarGrade = 'Strong' | 'Balanced' | 'Weak';
+
+export interface StructuralPillar {
+  name: string;
+  grade: PillarGrade;
+  points: number;
+  value: number | null;
+  unit: string;
+}
 
 export interface StockSnapshot {
   symbol: string;
@@ -31,23 +38,123 @@ export interface StockSnapshot {
   valuation: {
     label: ValuationLabel;
     stockPE: number | null;
-    sector: string | null;
-    sectorPeersMedianPE: number | null;
-    peerCount: number;
+    industry: string | null;
+    industryPE: number | null;
   };
   fundamentals: {
-    label: FundamentalsLabel;
+    label: PillarGrade;
+    score: number;
+    maxScore: number;
+    pillars: StructuralPillar[];
     basedOn: string;
-    overallScore: number | null;
   };
   timestamp: string;
 }
 
-function median(arr: number[]): number | null {
-  if (arr.length === 0) return null;
-  const s = [...arr].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
+// --- 4 Pillars of Structural Quality ---
+
+function pillar1ReturnOnCapital(roic: number | null, roe: number | null): StructuralPillar {
+  const val = roic ?? roe;
+  let grade: PillarGrade = 'Weak';
+  let points = 0;
+  if (val != null && Number.isFinite(val)) {
+    if (val >= 15) {
+      grade = 'Strong';
+      points = 2;
+    } else if (val >= 8) {
+      grade = 'Balanced';
+      points = 1;
+    }
+  }
+  return {
+    name: 'Return on Capital',
+    grade,
+    points,
+    value: val ?? null,
+    unit: '%'
+  };
+}
+
+function pillar2BalanceSheet(ndToEbitda: number | null): StructuralPillar {
+  let grade: PillarGrade = 'Weak';
+  let points = 0;
+  if (ndToEbitda != null && Number.isFinite(ndToEbitda)) {
+    if (ndToEbitda <= 1.5 || ndToEbitda < 0) {
+      grade = 'Strong';
+      points = 2;
+    } else if (ndToEbitda <= 3) {
+      grade = 'Balanced';
+      points = 1;
+    }
+  }
+  return {
+    name: 'Balance Sheet (ND/EBITDA)',
+    grade,
+    points,
+    value: ndToEbitda ?? null,
+    unit: 'x'
+  };
+}
+
+function pillar3FcfStability(fcfYield: number | null): StructuralPillar {
+  let grade: PillarGrade = 'Weak';
+  let points = 0;
+  if (fcfYield != null && Number.isFinite(fcfYield)) {
+    if (fcfYield > 3) {
+      grade = 'Strong';
+      points = 2;
+    } else if (fcfYield > 0) {
+      grade = 'Balanced';
+      points = 1;
+    }
+  }
+  return {
+    name: 'Free Cash Flow',
+    grade,
+    points,
+    value: fcfYield ?? null,
+    unit: '%'
+  };
+}
+
+function pillar4RevenueCagr(revenueGrowth: number | null): StructuralPillar {
+  let grade: PillarGrade = 'Weak';
+  let points = 0;
+  if (revenueGrowth != null && Number.isFinite(revenueGrowth)) {
+    if (revenueGrowth >= 10) {
+      grade = 'Strong';
+      points = 2;
+    } else if (revenueGrowth >= 3) {
+      grade = 'Balanced';
+      points = 1;
+    }
+  }
+  return {
+    name: 'Revenue Growth (CAGR)',
+    grade,
+    points,
+    value: revenueGrowth ?? null,
+    unit: '%'
+  };
+}
+
+function computeStructuralQuality(v: {
+  returnOnInvestedCapital: number | null;
+  returnOnEquity: number | null;
+  netDebtToEBITDA: number | null;
+  freeCashFlowYield: number | null;
+  revenueGrowth: number | null;
+}): { pillars: StructuralPillar[]; score: number; label: PillarGrade } {
+  const p1 = pillar1ReturnOnCapital(v.returnOnInvestedCapital, v.returnOnEquity);
+  const p2 = pillar2BalanceSheet(v.netDebtToEBITDA);
+  const p3 = pillar3FcfStability(v.freeCashFlowYield);
+  const p4 = pillar4RevenueCagr(v.revenueGrowth);
+  const pillars = [p1, p2, p3, p4];
+  const score = pillars.reduce((sum, p) => sum + p.points, 0);
+  let label: PillarGrade = 'Weak';
+  if (score >= 6) label = 'Strong';
+  else if (score >= 3) label = 'Balanced';
+  return { pillars, score, label };
 }
 
 // --- Main ---
@@ -73,54 +180,49 @@ export async function generateStockSnapshot(symbol: string): Promise<StockSnapsh
     differencePct: diff != null ? Math.round(diff * 100) / 100 : null
   };
 
-  // 2. Valuation — use getValuation + getIndustryPeerSymbols + getValuation for peers
+  // 2. Valuation — use FMP industry-pe-snapshot / sector-pe-snapshot (getValuation returns industryAveragePE, sectorAveragePE)
   const valuationData = await getValuation({ symbol: sym });
-  const sector = valuationData.sector ?? null;
   const industry = valuationData.industry ?? null;
+  const sector = valuationData.sector ?? null;
   const stockPE = valuationData.peRatio ?? null;
   const stockPEVal = stockPE != null && Number.isFinite(stockPE) ? Math.round(stockPE * 100) / 100 : null;
 
-  let sectorPeersMedianPE: number | null = null;
-  let peerCount = 0;
+  // Prefer industry P/E from API; fallback to sector P/E when industry unavailable
+  const industryPE =
+    (industry ? valuationData.industryAveragePE : null) ?? valuationData.sectorAveragePE ?? null;
+  const industryPERounded =
+    industryPE != null && Number.isFinite(industryPE) ? Math.round(industryPE * 100) / 100 : null;
 
-  const peerSymbols = await getIndustryPeerSymbols(sector, industry, sym);
-  if (peerSymbols.length > 0) {
-    const peerVals = await Promise.all(peerSymbols.map((s) => getValuation({ symbol: s })));
-    const peerPEs = peerVals
-      .map((v) => v.peRatio)
-      .filter((pe): pe is number => pe != null && pe > 0 && pe < 200 && Number.isFinite(pe));
-    sectorPeersMedianPE = median(peerPEs);
-    if (sectorPeersMedianPE != null) sectorPeersMedianPE = Math.round(sectorPeersMedianPE * 100) / 100;
-    peerCount = peerPEs.length;
-  }
-
-  let valLabel: ValuationLabel = 'Relative to sector';
-  if (stockPEVal != null && sectorPeersMedianPE != null && sectorPeersMedianPE > 0) {
-    const pctDiff = ((stockPEVal - sectorPeersMedianPE) / sectorPeersMedianPE) * 100;
-    if (pctDiff > 12) valLabel = 'Above sector peers';
-    else if (pctDiff < -12) valLabel = 'Below sector peers';
-    else valLabel = 'In line with sector peers';
+  let valLabel: ValuationLabel = 'Relative to industry';
+  if (stockPEVal != null && industryPERounded != null && industryPERounded > 0) {
+    const pctDiff = ((stockPEVal - industryPERounded) / industryPERounded) * 100;
+    if (pctDiff > 12) valLabel = 'Above industry peers';
+    else if (pctDiff < -12) valLabel = 'Below industry peers';
+    else valLabel = 'In line with industry peers';
   }
 
   const valuation = {
     label: valLabel,
     stockPE: stockPEVal,
-    sector,
-    sectorPeersMedianPE,
-    peerCount
+    industry: industry ?? sector,
+    industryPE: industryPERounded
   };
 
-  // 3. Fundamentals — use getRatingsSnapshot
-  const ratings = await getRatingsSnapshot(sym);
-  const overall = ratings.overallScore ?? 0;
-  let fundLabel: FundamentalsLabel = 'Mixed';
-  if (overall >= 4) fundLabel = 'Strong';
-  else if (overall <= 2) fundLabel = 'Weak';
+  // 3. Fundamentals — 4 Pillars of Structural Quality (ROIC/ROE, ND/EBITDA, FCF, Revenue CAGR)
+  const quality = computeStructuralQuality({
+    returnOnInvestedCapital: valuationData.returnOnInvestedCapital ?? null,
+    returnOnEquity: valuationData.returnOnEquity ?? null,
+    netDebtToEBITDA: valuationData.netDebtToEBITDA ?? null,
+    freeCashFlowYield: valuationData.freeCashFlowYield ?? null,
+    revenueGrowth: valuationData.revenueGrowth ?? null
+  });
 
   const fundamentals = {
-    label: fundLabel,
-    basedOn: 'Based on profitability, leverage, and valuation ratios',
-    overallScore: overall || null
+    label: quality.label,
+    score: quality.score,
+    maxScore: 8,
+    pillars: quality.pillars,
+    basedOn: '4 pillars: ROIC/ROE, Net Debt/EBITDA, FCF Stability, Revenue CAGR'
   };
 
   return {
