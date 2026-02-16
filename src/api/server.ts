@@ -135,11 +135,11 @@ app.get('/api/checkup/:ticker', async (req: Request, res: Response) => {
 
 // ============================================================================
 // HOLDING CHECKUP (App proxy) - POST with body { ticker, type?, name? }
+// Uses dailyCheck service (re-rating monitor: thesis, revisions, price, risk).
 // ============================================================================
 app.post('/api/holding-checkup', async (req: Request, res: Response) => {
   try {
     const { ticker, type } = req.body;
-    const noobMode = req.body.noobMode ?? req.query.noobMode === 'true';
 
     if (!ticker || typeof ticker !== 'string') {
       return res.status(400).json({ error: 'Missing or invalid "ticker" parameter' });
@@ -150,19 +150,19 @@ app.post('/api/holding-checkup', async (req: Request, res: Response) => {
     }
 
     const symbol = ticker.toUpperCase();
-    console.log(`[HOLDING-CHECKUP] ${symbol} (noob: ${noobMode})`);
+    console.log(`[HOLDING-CHECKUP] ${symbol}`);
 
-    const checkup = await generateStockCheckup(symbol);
-    const formatted =
-      noobMode ? formatNoobCheckup(checkup) : formatStockCheckup(checkup);
+    const result = await runDailyCheck(symbol);
+    const formatted = formatDailyCheck(result);
 
     res.json({
       success: true,
       checkup: formatted,
-      symbol,
       assetType: type || 'stock',
-      mode: noobMode ? 'noob' : 'professional',
-      timestamp: new Date().toISOString()
+      symbol,
+      webSearchUsed: false,
+      citationUrls: [],
+      newsBriefUsed: false
     });
   } catch (err: any) {
     console.error('[HOLDING-CHECKUP ERROR]', err.message);
