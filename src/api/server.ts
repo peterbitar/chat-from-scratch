@@ -534,14 +534,14 @@ app.get('/api/earnings-recap/:ticker', async (req: Request, res: Response) => {
     // Always return a narrative card when we have recap (analysis and story, not just numbers)
     const llmCard = await generateEarningsRecapCard(recap);
     const rawCard = llmCard ?? formatEarningsRecapAsCard(recap);
-    // Same shape as feed API (RetailCard): symbol, headline, title, content — app can use same rendering for feed and earnings
+    // Same shape as feed API (RetailCard): symbol, headline, title, content, explanation.classification.eventType
     const card = {
       symbol: ticker,
       headline: rawCard.title,
       title: rawCard.title,
-      content: rawCard.content
+      content: rawCard.content,
+      explanation: { classification: { eventType: 'earnings' as const } }
     };
-    // Feed returns { cards: RetailCard[] }; earnings returns same so app can use cards[0] for both
     const cards = [card];
     res.json({
       success: true,
@@ -587,7 +587,8 @@ app.get('/api/earnings-recap-feed/:ticker', async (req: Request, res: Response) 
       symbol: ticker,
       headline: rawCard.title,
       title: rawCard.title,
-      content: rawCard.content
+      content: rawCard.content,
+      explanation: { classification: { eventType: 'earnings' as const } }
     };
     res.json({
       success: true,
@@ -629,7 +630,8 @@ app.get('/api/news-feed/:ticker', async (req: Request, res: Response) => {
       symbol: ticker,
       headline: cardContent.title,
       title: cardContent.title,
-      content: cardContent.content
+      content: cardContent.content,
+      explanation: { classification: { eventType: 'news' as const } }
     };
     res.json({
       success: true,
@@ -665,7 +667,8 @@ app.post('/api/news-feed', async (req: Request, res: Response) => {
       symbol,
       headline: cardContent.title,
       title: cardContent.title,
-      content: cardContent.content
+      content: cardContent.content,
+      explanation: { classification: { eventType: 'news' as const } }
     };
     res.json({
       success: true,

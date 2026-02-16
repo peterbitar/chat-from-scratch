@@ -10,11 +10,18 @@ import { buildPrimaryCard } from './primaryCardBuilder';
 import { generateFeedCard } from './feedCardGenerator';
 import type { DailyCheckResult } from './dailyCheck';
 
+/** eventType values for iOS EventCardType: news, analysis, earnings */
+export type FeedCardEventType = 'news' | 'analysis' | 'earnings';
+
 export interface RetailCard {
   symbol: string;
   headline: string;
   title: string;
   content: string;
+  /** For iOS: maps to EventCardType (news, analysis, earnings) */
+  explanation?: {
+    classification: { eventType: FeedCardEventType };
+  };
 }
 
 export interface RetailFeedResult {
@@ -71,10 +78,12 @@ export async function generateRetailFeed(symbols: string[]): Promise<RetailFeedR
         symbol: result.symbol,
         headline: generated.title,
         title: generated.title,
-        content: generated.content
+        content: generated.content,
+        explanation: { classification: { eventType: 'analysis' as const } }
       });
     } else {
-      cards.push(fallbackCard(result.symbol, primary.summary, primary.keyMetric));
+      const fallback = fallbackCard(result.symbol, primary.summary, primary.keyMetric);
+      cards.push({ ...fallback, explanation: { classification: { eventType: 'analysis' as const } } });
     }
   }
 
