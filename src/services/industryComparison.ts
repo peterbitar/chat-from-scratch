@@ -6,20 +6,14 @@
  * 2. Stock vs Industry: growth %, ROE %, debt, valuation premium %
  * 3. Verdict: Premium justified | Fair | Premium stretched | Discount
  *
- * Rule: Cheap/expensive is relative valuation adjusted for growth, quality, and risk.
+ * Uses tools as single source of truth: getValuation, getAnalystRatings, getIndustryPeerSymbols.
  */
 
-import axios from 'axios';
 import { getValuation } from '../tools/valuationExtractor';
 import { getAnalystRatings } from '../tools/analystRatings';
-
-const FMP_API_KEY = process.env.FMP_API_KEY;
-const BASE = 'https://financialmodelingprep.com/stable';
-
-const p = (params: Record<string, unknown>) => ({
-  params: { ...params, apikey: FMP_API_KEY },
-  headers: { apikey: FMP_API_KEY } as Record<string, string>
-});
+import { getIndustryPeerSymbols } from '../tools/industryPeers';
+import { getIncomeStatement } from '../tools/incomeStatement';
+import { getAnalystEstimates } from '../tools/analystEstimates';
 
 function num(val: unknown): number | null {
   if (val == null || val === '') return null;
@@ -44,7 +38,7 @@ function winsorizeTop5Pct(arr: number[]): number[] {
   return arr.map((x) => (x > cap ? cap : x));
 }
 
-// --- Peer metrics (lightweight: 3 FMP calls per symbol) ---
+/** Peer metrics derived from getValuation (tools as source of truth). */
 interface PeerMetrics {
   symbol: string;
   pe: number | null;
@@ -55,59 +49,16 @@ interface PeerMetrics {
   netDebtToEBITDA: number | null;
 }
 
-async function fetchPeerMetrics(symbol: string): Promise<PeerMetrics> {
-  try {
-    const [metricsRes, growthRes, ratiosRes] = await Promise.all([
-      axios.get<Array<{ returnOnEquity?: number; returnOnInvestedCapital?: number; netDebtToEBITDA?: number }>>(`${BASE}/key-metrics`, p({ symbol })).catch(() => ({ data: [] })),
-      axios.get<Array<{ revenueGrowth?: number; epsgrowth?: number }>>(`${BASE}/financial-growth`, p({ symbol })).catch(() => ({ data: [] })),
-      axios.get<Array<{ priceToEarningsRatioTTM?: number; priceEarningsRatioTTM?: number }>>(`${BASE}/ratios-ttm`, p({ symbol })).catch(() => ({ data: [] }))
-    ]);
-
-    const metrics = metricsRes.data?.[0];
-    const growth = growthRes.data?.[0];
-    const ratios = ratiosRes.data?.[0];
-
-    const roeRaw = metrics?.returnOnEquity ?? null;
-    const roicRaw = metrics?.returnOnInvestedCapital ?? null;
-    const netDebtRaw = metrics?.netDebtToEBITDA ?? null;
-    const revenueGrowthRaw = growth?.revenueGrowth ?? null;
-    const epsGrowthRaw = growth?.epsgrowth ?? null;
-    const peRaw = ratios?.priceToEarningsRatioTTM ?? ratios?.priceEarningsRatioTTM ?? null;
-
-    return {
-      symbol,
-      pe: peRaw != null && peRaw > 0 && peRaw < 500 ? Math.round(peRaw * 100) / 100 : null,
-      revenueGrowth: revenueGrowthRaw != null ? Math.round(revenueGrowthRaw * 10000) / 100 : null,
-      epsGrowth: epsGrowthRaw != null ? Math.round(epsGrowthRaw * 10000) / 100 : null,
-      roe: roeRaw != null ? Math.round(roeRaw * 100) / 100 : null,
-      roic: roicRaw != null ? Math.round(roicRaw * 100) / 100 : null,
-      netDebtToEBITDA: netDebtRaw != null ? Math.round(netDebtRaw * 100) / 100 : null
-    };
-  } catch {
-    return { symbol, pe: null, revenueGrowth: null, epsGrowth: null, roe: null, roic: null, netDebtToEBITDA: null };
-  }
-}
-
-/** Get industry/sector peer symbols via company-screener (sector filter; FMP supports sector). */
-async function fetchIndustryPeerSymbols(sector: string | null, industry: string | null, excludeSymbol: string): Promise<string[]> {
-  const sym = excludeSymbol.toUpperCase();
-  if (!sector && !industry) return [];
-
-  const params: Record<string, unknown> = { limit: 25 };
-  if (sector) params.sector = sector;
-  // Some FMP plans support industry on company-screener
-  if (industry) params.industry = industry;
-
-  try {
-    const res = await axios.get<Array<{ symbol?: string }>>(`${BASE}/company-screener`, p(params)).catch(() => ({ data: [] }));
-    const list = Array.isArray(res.data) ? res.data : [];
-    return list
-      .map((c) => (c.symbol || '').toString().toUpperCase())
-      .filter((s) => s && s !== sym)
-      .slice(0, 18);
-  } catch {
-    return [];
-  }
+function valuationToPeerMetrics(symbol: string, v: Awaited<ReturnType<typeof getValuation>>): PeerMetrics {
+  const pe = v.peRatio != null && v.peRatio > 0 && v.peRatio < 500 ? Math.round(v.peRatio * 100) / 100 : null;
+  const revenueGrowth = v.revenueGrowth != null ? Math.round(v.revenueGrowth * 100) / 100 : null;
+  const epsGrowth = v.epsGrowth != null ? Math.round(v.epsGrowth * 100) / 100 : null;
+  const roe = v.returnOnEquity != null ? Math.round(v.returnOnEquity * 100) / 100 : null;
+  const roic = (v as { returnOnInvestedCapital?: number | null }).returnOnInvestedCapital != null
+    ? Math.round((v as { returnOnInvestedCapital: number }).returnOnInvestedCapital * 100) / 100
+    : null;
+  const netDebtToEBITDA = v.netDebtToEBITDA != null ? Math.round(v.netDebtToEBITDA * 100) / 100 : null;
+  return { symbol, pe, revenueGrowth, epsGrowth, roe, roic, netDebtToEBITDA };
 }
 
 export type Verdict = 'Premium justified' | 'Fair' | 'Premium stretched' | 'Discount';
@@ -262,7 +213,7 @@ export async function runIndustryComparison(symbol: string): Promise<IndustryCom
 
   const sector = valuation.sector ?? null;
   const industry = valuation.industry ?? null;
-  const peerSymbols = await fetchIndustryPeerSymbols(sector, industry, sym);
+  const peerSymbols = await getIndustryPeerSymbols(sector, industry, sym);
 
   const revGrowth = valuation.revenueGrowth ?? null;
   const epsGrowth = valuation.epsGrowth ?? null;
@@ -303,7 +254,8 @@ export async function runIndustryComparison(symbol: string): Promise<IndustryCom
   };
 
   if (peerSymbols.length > 0) {
-    const peerMetricsList = await Promise.all(peerSymbols.map((s) => fetchPeerMetrics(s)));
+    const peerVals = await Promise.all(peerSymbols.map((s) => getValuation({ symbol: s })));
+    const peerMetricsList = peerVals.map((v, i) => valuationToPeerMetrics(peerSymbols[i]!, v));
 
     // Exclude loss-making / severely distressed: ROE < -20% (institutional filter)
     const eligible = (p: PeerMetrics) => p.roe == null || p.roe >= -20;
@@ -510,14 +462,11 @@ export async function runIndustryComparison(symbol: string): Promise<IndustryCom
           : 'expensive'
       : null;
 
-  // --- 3Y Revenue CAGR & margin trend (FMP income-statement annual) ---
+  // --- 3Y Revenue CAGR & margin trend — use getIncomeStatement ---
   let revenueCagr3y: number | null = null;
   let marginTrend: 'expanding' | 'stable' | 'contracting' | null = null;
   try {
-    const incRes = await axios
-      .get<Array<{ revenue?: number; operatingIncome?: number }>>(`${BASE}/income-statement`, p({ symbol: sym, period: 'annual', limit: 4 }))
-      .catch(() => ({ data: [] }));
-    const statements = Array.isArray(incRes.data) ? incRes.data : [];
+    const statements = await getIncomeStatement(sym, { period: 'annual', limit: 4 });
     if (statements.length >= 4) {
       const rev0 = num(statements[0]?.revenue);
       const rev3 = num(statements[3]?.revenue);
@@ -542,15 +491,12 @@ export async function runIndustryComparison(symbol: string): Promise<IndustryCom
     // leave revenueCagr3y, marginTrend as-is
   }
 
-  // --- Forward EPS & revision trend (FMP analyst-estimates) ---
+  // --- Forward EPS & revision trend — use getAnalystEstimates ---
   let forwardEpsConsensus: number | null = null;
   let earningsRevisionTrend: 'rising' | 'flat' | 'falling' | null = null;
   let epsRevisionTrend90d: 'up' | 'flat' | 'down' | null = null;
   try {
-    const estRes = await axios
-      .get<Array<{ epsAvg?: number; date?: string }>>(`${BASE}/analyst-estimates`, p({ symbol: sym, period: 'annual', limit: 4 }))
-      .catch(() => ({ data: [] }));
-    const estimates = Array.isArray(estRes.data) ? estRes.data : [];
+    const estimates = await getAnalystEstimates(sym, { period: 'annual', limit: 4 });
     const latest = estimates[0];
     const eps = latest?.epsAvg;
     if (eps != null && Number.isFinite(eps)) {

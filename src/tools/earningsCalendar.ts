@@ -58,3 +58,30 @@ export async function getEarningsCalendar({ symbol }: { symbol: string }) {
     };
   }
 }
+
+/**
+ * Fetch earnings history for a symbol (all quarters, no date-range limit).
+ * Used by earningsRecap as fallback when earnings-calendar has no reported events.
+ */
+export async function getEarningsHistory(symbol: string): Promise<EarningsEvent[]> {
+  try {
+    const res = await axios.get<Array<Record<string, unknown>>>(
+      `${BASE}/earnings?symbol=${symbol.toUpperCase()}&apikey=${process.env.FMP_API_KEY}`
+    );
+    const data = Array.isArray(res.data) ? res.data : [];
+    return data
+      .filter((row) => row.epsActual != null || row.revenueActual != null)
+      .sort((a, b) => String(b.date ?? '').localeCompare(String(a.date ?? '')))
+      .map((row) => ({
+        symbol: symbol.toUpperCase(),
+        date: String(row.date ?? ''),
+        epsActual: row.epsActual != null ? Number(row.epsActual) : null,
+        epsEstimated: row.epsEstimated != null ? Number(row.epsEstimated) : null,
+        revenueActual: row.revenueActual != null ? Number(row.revenueActual) : null,
+        revenueEstimated: row.revenueEstimated != null ? Number(row.revenueEstimated) : null,
+        lastUpdated: row.lastUpdated as string | undefined
+      }));
+  } catch {
+    return [];
+  }
+}

@@ -3,17 +3,12 @@
  *
  * Shows only when relevant: within 7 days after earnings, or revision spike
  * post-earnings, or significant price move post-earnings. Otherwise stale.
+ *
+ * Uses tools as single source of truth: getEarningsCalendar, getEarningsHistory, getPriceHistory.
  */
 
-import axios from 'axios';
-import { getEarningsCalendar } from '../tools/earningsCalendar';
-
-const FMP_API_KEY = process.env.FMP_API_KEY;
-const BASE = 'https://financialmodelingprep.com/stable';
-
-const p = (params: Record<string, unknown>) => ({
-  params: { ...params, apikey: FMP_API_KEY }
-});
+import { getEarningsCalendar, getEarningsHistory } from '../tools/earningsCalendar';
+import { getPriceHistory, getClose } from '../tools/priceHistory';
 
 export type GuidanceVerdict = 'Raised' | 'Lowered' | 'Reaffirmed' | null;
 export type MarginsVerdict = 'Expanded' | 'Compressed' | 'Flat' | null;
@@ -56,26 +51,21 @@ function quarterFromDate(dateStr: string): string {
   return `Q${q} FY${y}`;
 }
 
-/** Price change from reportDate to 3 trading days later (approximate). */
+/** Price change from reportDate to 3 trading days later (approximate). Uses getPriceHistory. */
 async function marketReactionAfterEarnings(symbol: string, reportDate: string): Promise<number | null> {
-  try {
-    const from = new Date(reportDate);
-    const to = new Date(from);
-    to.setDate(to.getDate() + 7);
-    const res = await axios.get<{ date: string; close?: number; adjClose?: number }[]>(
-      `${BASE}/historical-price-eod/light`,
-      p({ symbol, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) })
-    );
-    const prices = Array.isArray(res.data) ? res.data : [];
-    if (prices.length < 2) return null;
-    const sorted = [...prices].sort((a, b) => a.date.localeCompare(b.date));
-    const firstClose = sorted[0]?.close ?? sorted[0]?.adjClose;
-    const lastClose = sorted[Math.min(3, sorted.length - 1)]?.close ?? sorted[Math.min(3, sorted.length - 1)]?.adjClose;
-    if (firstClose == null || lastClose == null || firstClose === 0) return null;
-    return ((lastClose - firstClose) / firstClose) * 100;
-  } catch {
-    return null;
-  }
+  const from = new Date(reportDate);
+  const to = new Date(from);
+  to.setDate(to.getDate() + 7);
+  const fromStr = from.toISOString().slice(0, 10);
+  const toStr = to.toISOString().slice(0, 10);
+  const prices = await getPriceHistory(symbol, fromStr, toStr);
+  if (prices.length < 2) return null;
+  const sorted = [...prices].sort((a, b) => a.date.localeCompare(b.date));
+  const firstClose = getClose(sorted[0]!);
+  const lastPoint = sorted[Math.min(3, sorted.length - 1)];
+  const lastClose = lastPoint ? getClose(lastPoint) : undefined;
+  if (firstClose == null || lastClose == null || firstClose === 0) return null;
+  return ((lastClose - firstClose) / firstClose) * 100;
 }
 
 function buildNarrative(
@@ -99,22 +89,6 @@ function buildNarrative(
   return parts.join(', ') + '.';
 }
 
-/** Fetch symbol-specific earnings (all quarters, no date-range limit). */
-async function getEarningsBySymbol(symbol: string) {
-  try {
-    const res = await axios.get<Array<Record<string, unknown>>>(
-      `${BASE}/earnings`,
-      p({ symbol: symbol.toUpperCase() })
-    );
-    const data = Array.isArray(res.data) ? res.data : [];
-    return data
-      .filter((row) => row.epsActual != null || row.revenueActual != null)
-      .sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Fetch last reported earnings and build structured recap.
  * Returns null if no reported earnings in the last 2 quarters.
@@ -124,18 +98,9 @@ export async function getEarningsRecap(symbol: string): Promise<EarningsRecap | 
   const cal = await getEarningsCalendar({ symbol: sym });
   let events = cal.events ?? [];
 
-  // Fallback: earnings-calendar is 90-day window; use symbol-specific endpoint for full history
+  // Fallback: earnings-calendar is 90-day window; use getEarningsHistory for full history
   if (events.filter((ev) => ev.epsActual != null || ev.revenueActual != null).length === 0) {
-    const fallback = await getEarningsBySymbol(sym);
-    events = fallback.map((row) => ({
-      symbol: sym,
-      date: String(row.date ?? ''),
-      epsActual: row.epsActual != null ? Number(row.epsActual) : null,
-      epsEstimated: row.epsEstimated != null ? Number(row.epsEstimated) : null,
-      revenueActual: row.revenueActual != null ? Number(row.revenueActual) : null,
-      revenueEstimated: row.revenueEstimated != null ? Number(row.revenueEstimated) : null,
-      lastUpdated: row.lastUpdated as string | undefined
-    }));
+    events = await getEarningsHistory(sym);
   }
 
   // Prefer most recent event with actuals. Trust actuals over date—FMP date can be

@@ -15,6 +15,8 @@
 import axios from 'axios';
 import { getValuation } from '../tools/valuationExtractor';
 import { getEarningsCalendar } from '../tools/earningsCalendar';
+import { getPriceHistoryDays, getClose, type EodPoint } from '../tools/priceHistory';
+import { getAnalystEstimates } from '../tools/analystEstimates';
 import { runIndustryComparison } from './industryComparison';
 import {
   saveSnapshot,
@@ -51,22 +53,7 @@ function formatYMD(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-// --- Price history ---
-interface EodPoint {
-  date: string;
-  price?: number;
-  close?: number;
-  adjClose?: number;
-  adj_close?: number;
-  volume?: number;
-  [k: string]: unknown;
-}
-
-function getClose(p: EodPoint): number | undefined {
-  const c = p.adjClose ?? p.adj_close ?? p.price ?? p.close;
-  return typeof c === 'number' && Number.isFinite(c) ? c : undefined;
-}
-
+// --- Price history (uses getClose from tools/priceHistory) ---
 function annualizedVol30d(points: EodPoint[]): number | null {
   if (!points.length) return null;
   const sorted = [...points].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -108,39 +95,8 @@ function priceChangePct(points: EodPoint[], days: number): number | null {
   return ((latest - prior) / prior) * 100;
 }
 
-async function fetchPriceHistory(symbol: string, days: number): Promise<EodPoint[]> {
-  const to = new Date();
-  const from = new Date();
-  from.setDate(from.getDate() - days);
-  try {
-    const res = await axios.get<EodPoint[]>(`${BASE}/historical-price-eod/light`, p({ symbol, from: formatYMD(from), to: formatYMD(to) }));
-    return Array.isArray(res.data) ? res.data : [];
-  } catch {
-    return [];
-  }
-}
-
-interface AnalystEstimateRow {
-  date?: string;
-  epsAvg?: number;
-  epsHigh?: number;
-  epsLow?: number;
-  estimatedEpsHigh?: number;
-  estimatedEpsLow?: number;
-  revenueAvg?: number;
-  numAnalystsEps?: number;
-  numAnalystsRevenue?: number;
-  [k: string]: unknown;
-}
-
-async function fetchAnalystEstimates(symbol: string): Promise<AnalystEstimateRow[]> {
-  try {
-    const res = await axios.get<AnalystEstimateRow[]>(`${BASE}/analyst-estimates`, p({ symbol, period: 'annual', limit: 8 }));
-    return Array.isArray(res.data) ? res.data : [];
-  } catch {
-    return [];
-  }
-}
+// fetchPriceHistory -> getPriceHistoryDays from tools
+// fetchAnalystEstimates -> getAnalystEstimates from tools
 
 interface KeyMetricsRow {
   date?: string;
@@ -482,9 +438,9 @@ export async function runDailyCheck(symbol: string): Promise<DailyCheckResult> {
 
   const [valuation, priceHistory, sp500History, estimates, metricsHistory, profileBeta, upgradesDowngrades, insiderTrades, earningsResp, industryResult, sharesFloat, shortInterestRaw, institutionalRaw, etfExposure, optionsRaw, sp500Constituent] = await Promise.all([
     getValuation({ symbol: sym }),
-    fetchPriceHistory(sym, 220),
-    fetchPriceHistory(GSPC, 40),
-    fetchAnalystEstimates(sym),
+    getPriceHistoryDays(sym, 220),
+    getPriceHistoryDays(GSPC, 40),
+    getAnalystEstimates(sym, { period: 'annual', limit: 8 }),
     fetchKeyMetricsHistory(sym),
     fetchProfileBeta(sym),
     fetchUpgradesDowngrades(sym, 7),
