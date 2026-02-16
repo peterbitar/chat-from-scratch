@@ -5,9 +5,13 @@ const FMP_API_KEY = process.env.FMP_API_KEY;
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const BASE = 'https://financialmodelingprep.com/stable';
 
-/** Minimum ms between FMP API calls to avoid 429 rate limits when many symbols are requested in parallel. */
-const FMP_RATE_LIMIT_MS = 650;
+/** FMP free tier is typically 5 req/min. Space calls to stay under that. */
+const FMP_RATE_LIMIT_MS = 13_000;
 let lastFmpCallMs = 0;
+
+/** In-memory cache: same symbol within 5 min reuses result to avoid duplicate FMP calls. */
+const NEWS_CACHE_TTL_MS = 5 * 60 * 1000;
+const newsCache = new Map<string, { data: NewsUpdate; expires: number }>();
 
 /** Run one FMP GET with rate limiting and one retry on 429. */
 async function fmpGet(url: string, retried = false): Promise<{ data: any; status: number }> {
@@ -17,7 +21,7 @@ async function fmpGet(url: string, retried = false): Promise<{ data: any; status
   lastFmpCallMs = Date.now();
   const res = await axios.get(url, { validateStatus: () => true });
   if (res.status === 429 && !retried) {
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 5000));
     lastFmpCallMs = Date.now();
     const retry = await axios.get(url, { validateStatus: () => true });
     return { data: retry.data, status: retry.status };
@@ -62,7 +66,13 @@ export async function getNewsUpdate({
   /** Optional: max number of headlines to return (1–20). Default: 10. */
   limit?: number;
 }): Promise<NewsUpdate> {
+  const sym = symbol.toUpperCase();
+  const cacheKey = sym;
+
   try {
+    const cached = newsCache.get(cacheKey);
+    if (cached && cached.expires > Date.now()) return cached.data;
+
     // Default: last 7 days. FMP Search Stock News API supports from/to, page, limit (max 250, page max 100).
     const now = new Date();
     const defaultTo = formatDateYMD(now);
@@ -70,7 +80,6 @@ export async function getNewsUpdate({
     const fromParam = from ?? defaultFrom;
     const toParam = to ?? defaultTo;
 
-    const sym = symbol.toUpperCase();
     let articles: any[] = [];
     try {
       const { data: raw, status } = await fmpGet(
@@ -121,13 +130,15 @@ export async function getNewsUpdate({
     }
 
     if (!Array.isArray(articles) || articles.length === 0) {
-      return {
+      const noNews: NewsUpdate = {
         symbol: sym,
         storyline: `No recent news found for ${sym} in this period.`,
         headlines: [{ title: `No recent news found for ${sym}.`, url: '', sentiment: 'Neutral' }],
         from: fromParam,
         to: toParam
       };
+      newsCache.set(cacheKey, { data: noNews, expires: Date.now() + NEWS_CACHE_TTL_MS });
+      return noNews;
     }
 
     const cap = Math.min(Math.max(1, limit ?? DEFAULT_NEWS_LIMIT), MAX_NEWS_LIMIT);
@@ -217,14 +228,18 @@ export async function getNewsUpdate({
       storyline = `Recent coverage of ${sym}: ${p} positive, ${n} negative, ${u} neutral headlines. See headlines for details.`;
     }
 
-    return { symbol: sym, storyline, headlines, from: fromParam, to: toParam };
+    const result: NewsUpdate = { symbol: sym, storyline, headlines, from: fromParam, to: toParam };
+    newsCache.set(cacheKey, { data: result, expires: Date.now() + NEWS_CACHE_TTL_MS });
+    return result;
   } catch (err: any) {
     console.error(`[getNewsUpdate] Error for ${symbol}:`, err?.message || err);
-    return {
-      symbol: symbol.toUpperCase(),
-      storyline: `Unable to load news for ${symbol.toUpperCase()}.`,
+    const fallback: NewsUpdate = {
+      symbol: sym,
+      storyline: `Unable to load news for ${sym}.`,
       headlines: [{ title: `No news available for ${symbol}`, url: '', sentiment: 'Neutral' }]
     };
+    newsCache.set(cacheKey, { data: fallback, expires: Date.now() + NEWS_CACHE_TTL_MS });
+    return fallback;
   }
 }
 
