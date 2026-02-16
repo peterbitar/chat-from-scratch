@@ -5,6 +5,26 @@ const FMP_API_KEY = process.env.FMP_API_KEY;
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const BASE = 'https://financialmodelingprep.com/stable';
 
+/** Minimum ms between FMP API calls to avoid 429 rate limits when many symbols are requested in parallel. */
+const FMP_RATE_LIMIT_MS = 650;
+let lastFmpCallMs = 0;
+
+/** Run one FMP GET with rate limiting and one retry on 429. */
+async function fmpGet(url: string, retried = false): Promise<{ data: any; status: number }> {
+  const now = Date.now();
+  const wait = Math.max(0, lastFmpCallMs + FMP_RATE_LIMIT_MS - now);
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastFmpCallMs = Date.now();
+  const res = await axios.get(url, { validateStatus: () => true });
+  if (res.status === 429 && !retried) {
+    await new Promise((r) => setTimeout(r, 2000));
+    lastFmpCallMs = Date.now();
+    const retry = await axios.get(url, { validateStatus: () => true });
+    return { data: retry.data, status: retry.status };
+  }
+  return { data: res.data, status: res.status };
+}
+
 export interface Headline {
   title: string;
   url: string;
@@ -53,11 +73,12 @@ export async function getNewsUpdate({
     const sym = symbol.toUpperCase();
     let articles: any[] = [];
     try {
-      const response = await axios.get(
+      const { data: raw, status } = await fmpGet(
         `${BASE}/news/stock?symbols=${sym}&from=${fromParam}&to=${toParam}&page=0&limit=20&apikey=${FMP_API_KEY}`
       );
-      const raw = response.data || [];
-      if (!Array.isArray(raw)) {
+      if (status !== 200) {
+        console.warn(`[getNewsUpdate] Stock news fetch failed for ${sym}: ${status}`);
+      } else if (!Array.isArray(raw)) {
         console.warn(`[getNewsUpdate] FMP /news/stock returned non-array for ${sym}:`, typeof raw);
       } else {
         articles = raw;
@@ -69,11 +90,10 @@ export async function getNewsUpdate({
     // Fallback: stock-latest with date range when Search Stock News returns nothing
     if (articles.length === 0) {
       try {
-        const res = await axios.get(
+        const { data: raw, status } = await fmpGet(
           `${BASE}/news/stock-latest?page=0&limit=20&from=${fromParam}&to=${toParam}&apikey=${FMP_API_KEY}`
         );
-        const raw = res.data || [];
-        if (Array.isArray(raw)) {
+        if (status === 200 && Array.isArray(raw)) {
           articles = raw.filter((a: any) => (a.symbol ?? a.ticker ?? '').toString().toUpperCase() === sym);
           if (articles.length === 0) articles = raw;
         }
@@ -85,14 +105,16 @@ export async function getNewsUpdate({
     // Fallback: general news when still empty
     if (articles.length === 0) {
       try {
-        const generalRes = await axios.get(`${BASE}/news/general-latest?limit=15&apikey=${FMP_API_KEY}`);
-        const generalNews = generalRes.data || [];
-        articles = generalNews.filter((article: any) => {
-          const title = (article.title || '').toUpperCase();
-          const text = (article.text || '').toUpperCase();
-          return title.includes(sym) || text.includes(sym);
-        });
-        if (articles.length === 0) articles = generalNews.slice(0, 5);
+        const { data: generalNewsRaw, status } = await fmpGet(`${BASE}/news/general-latest?limit=15&apikey=${FMP_API_KEY}`);
+        const generalNews = Array.isArray(generalNewsRaw) ? generalNewsRaw : [];
+        if (status === 200 && generalNews.length > 0) {
+          articles = generalNews.filter((article: any) => {
+            const title = (article.title || '').toUpperCase();
+            const text = (article.text || '').toUpperCase();
+            return title.includes(sym) || text.includes(sym);
+          });
+          if (articles.length === 0) articles = generalNews.slice(0, 5);
+        }
       } catch (e) {
         console.warn(`Could not fetch general news for ${sym}`);
       }
