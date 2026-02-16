@@ -13,6 +13,7 @@ import { runIndustryComparison } from '../services/industryComparison';
 import { formatIndustryComparison } from '../formatters/industryComparisonFormatter';
 import { runDailyCheck } from '../services/dailyCheck';
 import { formatDailyCheck } from '../formatters/dailyCheckFormatter';
+import { polishDailyCheckReport } from '../services/dailyCheckPolisher';
 import { generateRabbitStory } from '../services/rabbitStoryEngine';
 import { generateDominantSignalFeed } from '../services/dominantSignalFeed';
 import { generateRetailFeed } from '../services/retailFeed';
@@ -154,10 +155,11 @@ app.post('/api/holding-checkup', async (req: Request, res: Response) => {
 
     const result = await runDailyCheck(symbol);
     const formatted = formatDailyCheck(result);
+    const checkup = await polishDailyCheckReport(symbol, formatted);
 
     res.json({
       success: true,
-      checkup: formatted,
+      checkup,
       assetType: type || 'stock',
       symbol,
       webSearchUsed: false,
