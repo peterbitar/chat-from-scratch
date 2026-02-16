@@ -1,3 +1,9 @@
+/**
+ * Tool registry for the finance agent (Chat).
+ * Grouped by product: CARDS (News, Card, Earnings) — same data that backs the three card types per holding.
+ * Chat uses these tools when answering; card UIs call the underlying services directly.
+ */
+
 import { getValuation } from './valuationExtractor';
 import { getPeerComparison } from './peerComparison';
 import { getNewsUpdate } from './newsSentiment';
@@ -15,6 +21,121 @@ import { formatEarningsRecap } from '../formatters/earningsRecapFormatter';
 import { generateStockSnapshot } from '../services/stockSnapshot';
 
 export const tools = [
+  // -------------------------------------------------------------------------
+  // CARDS — Data for the three card types per holding (News, Card, Earnings)
+  // -------------------------------------------------------------------------
+
+  // ---- News card ----
+  {
+    name: 'getNewsUpdate',
+    type: 'function',
+    function: {
+      name: 'getNewsUpdate',
+      description: 'Get a news update for a stock: returns a storyline summary of what is happening (narrative) plus recent headlines with sentiment. Optional: from/to (YYYY-MM-DD), limit (1–20).',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Ticker symbol (e.g., TSLA)' },
+          from: { type: 'string', description: 'Optional: only news on or after this date (YYYY-MM-DD)' },
+          to: { type: 'string', description: 'Optional: only news on or before this date (YYYY-MM-DD)' },
+          limit: { type: 'number', description: 'Optional: max headlines to return (1–20, default 10)' }
+        },
+        required: ['symbol']
+      }
+    },
+    func: getNewsUpdate
+  },
+
+  // ---- (Daily) Card ----
+  {
+    name: 'getDailyCheck',
+    type: 'function',
+    function: {
+      name: 'getDailyCheck',
+      description: 'Daily re-rating monitor: thesis status (Improving/Stable/Deteriorating), what changed today, risk alerts. Uses EPS/revenue revisions, price vs fundamentals divergence, valuation compression, and risk signals. Best for tracking portfolio positions daily.',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Ticker symbol (e.g., AAPL)' }
+        },
+        required: ['symbol']
+      }
+    },
+    func: async ({ symbol }: { symbol: string }) => {
+      const result = await runDailyCheck(symbol);
+      return { ...result, report: formatDailyCheck(result) };
+    }
+  },
+  {
+    name: 'getStockSnapshot',
+    type: 'function',
+    function: {
+      name: 'getStockSnapshot',
+      description: 'Quick 3-metric snapshot: vs S&P 500 (3Y), valuation vs sector peers, fundamentals strength. Same data as stockSnapshot service. Use for "quick take", "snapshot", "at a glance", or when user wants a brief overview without full checkup.',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Ticker symbol (e.g., AAPL)' }
+        },
+        required: ['symbol']
+      }
+    },
+    func: async ({ symbol }: { symbol: string }) => {
+      const snapshot = await generateStockSnapshot(symbol);
+      const vs = snapshot.vsSp500;
+      const val = snapshot.valuation;
+      const fund = snapshot.fundamentals;
+      const report =
+        `${snapshot.symbol} Snapshot\n\n` +
+        `vs S&P 500 (3Y): ${vs?.label ?? 'N/A'} (stock ${vs?.stockReturn3Y != null ? vs.stockReturn3Y.toFixed(1) + '%' : 'N/A'}, S&P 500 ${vs?.sp500Return3Y != null ? vs.sp500Return3Y.toFixed(1) + '%' : 'N/A'})\n` +
+        `Valuation: ${val?.label ?? 'N/A'} (P/E ${val?.stockPE ?? 'N/A'}, sector peers median ${val?.sectorPeersMedianPE ?? 'N/A'})\n` +
+        `Fundamentals: ${fund?.label ?? 'N/A'} (${fund?.basedOn ?? 'N/A'})`;
+      return { ...snapshot, report };
+    }
+  },
+
+  // ---- Earnings card ----
+  {
+    name: 'getEarningsRecap',
+    type: 'function',
+    function: {
+      name: 'getEarningsRecap',
+      description: 'Last quarter earnings recap: revenue/EPS vs estimates, guidance, margins, market reaction. Same data as earningsRecap service. Use when user asks about "last earnings", "earnings report", "how did they do last quarter", or post-earnings analysis.',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Ticker symbol (e.g., AAPL)' }
+        },
+        required: ['symbol']
+      }
+    },
+    func: async ({ symbol }: { symbol: string }) => {
+      const recap = await getEarningsRecap(symbol);
+      if (!recap) return { symbol: symbol.toUpperCase(), recap: null, report: 'No recent earnings data available.' };
+      return { recap, report: formatEarningsRecap(recap) };
+    }
+  },
+  {
+    name: 'getEarningsCalendar',
+    type: 'function',
+    function: {
+      name: 'getEarningsCalendar',
+      description: 'Get upcoming earnings date for a stock',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Ticker symbol (e.g., NFLX)' }
+        },
+        required: ['symbol']
+      }
+    },
+    func: getEarningsCalendar
+  },
+
+  // -------------------------------------------------------------------------
+  // CHAT — Valuation, comparison, deep-dive (used when answering questions)
+  // -------------------------------------------------------------------------
+
   {
     name: 'getValuation',
     type: 'function',
@@ -46,41 +167,6 @@ export const tools = [
       }
     },
     func: getPeerComparison
-  },
-  {
-    name: 'getNewsUpdate',
-    type: 'function',
-    function: {
-      name: 'getNewsUpdate',
-      description: 'Get a news update for a stock: returns a storyline summary of what is happening (narrative) plus recent headlines with sentiment. Optional: from/to (YYYY-MM-DD), limit (1–20).',
-      parameters: {
-        type: 'object',
-        properties: {
-          symbol: { type: 'string', description: 'Ticker symbol (e.g., TSLA)' },
-          from: { type: 'string', description: 'Optional: only news on or after this date (YYYY-MM-DD)' },
-          to: { type: 'string', description: 'Optional: only news on or before this date (YYYY-MM-DD)' },
-          limit: { type: 'number', description: 'Optional: max headlines to return (1–20, default 10)' }
-        },
-        required: ['symbol']
-      }
-    },
-    func: getNewsUpdate
-  },
-  {
-    name: 'getEarningsCalendar',
-    type: 'function',
-    function: {
-      name: 'getEarningsCalendar',
-      description: 'Get upcoming earnings date for a stock',
-      parameters: {
-        type: 'object',
-        properties: {
-          symbol: { type: 'string', description: 'Ticker symbol (e.g., NFLX)' }
-        },
-        required: ['symbol']
-      }
-    },
-    func: getEarningsCalendar
   },
   {
     name: 'getAnalystRatings',
@@ -134,25 +220,6 @@ export const tools = [
     }
   },
   {
-    name: 'getDailyCheck',
-    type: 'function',
-    function: {
-      name: 'getDailyCheck',
-      description: 'Daily re-rating monitor: thesis status (Improving/Stable/Deteriorating), what changed today, risk alerts. Uses EPS/revenue revisions, price vs fundamentals divergence, valuation compression, and risk signals. Best for tracking portfolio positions daily.',
-      parameters: {
-        type: 'object',
-        properties: {
-          symbol: { type: 'string', description: 'Ticker symbol (e.g., AAPL)' }
-        },
-        required: ['symbol']
-      }
-    },
-    func: async ({ symbol }: { symbol: string }) => {
-      const result = await runDailyCheck(symbol);
-      return { ...result, report: formatDailyCheck(result) };
-    }
-  },
-  {
     name: 'getStockCheckup',
     type: 'function',
     function: {
@@ -171,54 +238,7 @@ export const tools = [
       return { report: formatStockCheckup(checkup), symbol: checkup.symbol, timestamp: checkup.timestamp, layers: checkup.layers } as Record<string, unknown>;
     }
   },
-  {
-    name: 'getEarningsRecap',
-    type: 'function',
-    function: {
-      name: 'getEarningsRecap',
-      description: 'Last quarter earnings recap: revenue/EPS vs estimates, guidance, margins, market reaction. Same data as earningsRecap service. Use when user asks about "last earnings", "earnings report", "how did they do last quarter", or post-earnings analysis.',
-      parameters: {
-        type: 'object',
-        properties: {
-          symbol: { type: 'string', description: 'Ticker symbol (e.g., AAPL)' }
-        },
-        required: ['symbol']
-      }
-    },
-    func: async ({ symbol }: { symbol: string }) => {
-      const recap = await getEarningsRecap(symbol);
-      if (!recap) return { symbol: symbol.toUpperCase(), recap: null, report: 'No recent earnings data available.' };
-      return { recap, report: formatEarningsRecap(recap) };
-    }
-  },
-  {
-    name: 'getStockSnapshot',
-    type: 'function',
-    function: {
-      name: 'getStockSnapshot',
-      description: 'Quick 3-metric snapshot: vs S&P 500 (3Y), valuation vs sector peers, fundamentals strength. Same data as stockSnapshot service. Use for "quick take", "snapshot", "at a glance", or when user wants a brief overview without full checkup.',
-      parameters: {
-        type: 'object',
-        properties: {
-          symbol: { type: 'string', description: 'Ticker symbol (e.g., AAPL)' }
-        },
-        required: ['symbol']
-      }
-    },
-    func: async ({ symbol }: { symbol: string }) => {
-      const snapshot = await generateStockSnapshot(symbol);
-      const vs = snapshot.vsSp500;
-      const val = snapshot.valuation;
-      const fund = snapshot.fundamentals;
-      const report =
-        `${snapshot.symbol} Snapshot\n\n` +
-        `vs S&P 500 (3Y): ${vs?.label ?? 'N/A'} (stock ${vs?.stockReturn3Y != null ? vs.stockReturn3Y.toFixed(1) + '%' : 'N/A'}, S&P 500 ${vs?.sp500Return3Y != null ? vs.sp500Return3Y.toFixed(1) + '%' : 'N/A'})\n` +
-        `Valuation: ${val?.label ?? 'N/A'} (P/E ${val?.stockPE ?? 'N/A'}, sector peers median ${val?.sectorPeersMedianPE ?? 'N/A'})\n` +
-        `Fundamentals: ${fund?.label ?? 'N/A'} (${fund?.basedOn ?? 'N/A'})`;
-      return { ...snapshot, report };
-    }
-  },
-  // ✅ Native web search tool
+  // Web search (Chat only)
   {
     type: 'web_search',
     name: 'web-search',

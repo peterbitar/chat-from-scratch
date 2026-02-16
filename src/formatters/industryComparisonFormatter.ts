@@ -54,16 +54,16 @@ export function formatIndustryComparison(result: IndustryComparisonResult): stri
           ? `${premiumPct.toFixed(0)}% above industry median`
           : 'in line with median';
   out += `   P/E:        ${vs.stockPE != null ? vs.stockPE.toFixed(1) : '—'}  (${premiumText})\n`;
-  const growthVs = vs.growthVsMedianPct != null ? (Math.abs(vs.growthVsMedianPct) > 500 ? (vs.growthVsMedianPct > 0 ? 'well above median' : 'well below median') : (vs.growthVsMedianPct >= 0 ? '+' : '') + vs.growthVsMedianPct.toFixed(0) + '% vs median') : '—';
+  // growthVs: not shown (peer median for growth not used)
   const roeVs = vs.roeVsMedianPct != null ? (Math.abs(vs.roeVsMedianPct) > 500 ? (vs.roeVsMedianPct > 0 ? 'well above median' : 'well below median') : (vs.roeVsMedianPct >= 0 ? '+' : '') + vs.roeVsMedianPct.toFixed(0) + '% vs median') : '—';
   if (vs.stockRevenueGrowth != null) {
-    out += `   Growth (Revenue YoY): ${vs.stockRevenueGrowth.toFixed(1)}%  (${growthVs})\n`;
+    out += `   Growth (Revenue YoY): ${vs.stockRevenueGrowth.toFixed(1)}%\n`;
   }
   if (vs.stockEpsGrowth != null) {
     out += `   Growth (EPS YoY):     ${vs.stockEpsGrowth.toFixed(1)}%\n`;
   }
   if (vs.stockRevenueGrowth == null && vs.stockEpsGrowth == null && vs.stockGrowth != null) {
-    out += `   Growth: ${vs.stockGrowth.toFixed(1)}%  (${growthVs})\n`;
+    out += `   Growth: ${vs.stockGrowth.toFixed(1)}%\n`;
   }
   out += `   ROE:        ${vs.stockROE != null ? vs.stockROE.toFixed(1) + '%' : '—'}  (${roeVs})\n`;
   out += `   ROIC:       ${vs.stockROIC != null ? vs.stockROIC.toFixed(1) + '%' : '—'}\n`;
@@ -159,8 +159,8 @@ export function formatIndustryComparison(result: IndustryComparisonResult): stri
   out += `\n━━━ Where the numbers come from (FMP) ━━━\n\n`;
   out += `Industry snapshot (medians)\n`;
   out += `   • Peer list: FMP company-screener by sector/industry (same as ${symbol}). Peers with ROE < -20% excluded; P/E winsorized at top 5%.\n`;
-  out += `   • Median P/E:  median of each peer’s P/E from FMP ratios-ttm (trailing 12 months).\n`;
-  out += `   • Median Growth:  median of each peer’s revenue or EPS growth from FMP financial-growth (YoY).\n`;
+  out += `   • Median P/E:  FMP industry-pe/sector-pe snapshot when available; else median of each peer's P/E from FMP ratios-ttm.\n`;
+  out += `   • Median Growth:  not used (no FMP sector/industry growth snapshot).\n`;
   out += `   • Median ROE:  median of each peer’s return on equity from FMP key-metrics.\n`;
   out += `   • Median Debt:  median of each peer’s net debt/EBITDA from FMP key-metrics.\n\n`;
   out += `${symbol} (this stock)\n`;

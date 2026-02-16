@@ -266,9 +266,7 @@ export async function runIndustryComparison(symbol: string): Promise<IndustryCom
       .filter((x): x is number => x != null && x > 0 && x < 500);
     peList = winsorizeTop5Pct(peList);
 
-    const growthList = eligiblePeers
-      .map((p) => growthValue(p.revenueGrowth, p.epsGrowth))
-      .filter((x): x is number => x != null);
+    // Growth: do not use peer median (no FMP sector/industry growth snapshot; peer median excluded per design).
     const roeList = eligiblePeers
       .map((p) => p.roe)
       .filter((x): x is number => x != null && x >= -20);
@@ -280,14 +278,16 @@ export async function runIndustryComparison(symbol: string): Promise<IndustryCom
       .filter((x): x is number => x != null);
 
     const medianPE = median(peList);
-    const medianGrowth = median(growthList);
     const medianROE = median(roeList);
     const medianROIC = median(roicList);
     const medianDebt = median(debtList);
 
+    // Prefer FMP industry-pe-snapshot / sector-pe-snapshot (valuation.industryAveragePE, sectorAveragePE)
+    // over peer-derived median—FMP snapshot is authoritative. Use peer median only when snapshot is null.
+    const snapshotPE = valuation.industryAveragePE ?? valuation.sectorAveragePE ?? null;
     industrySnapshot = {
-      medianForwardPE: medianPE ?? industrySnapshot.medianForwardPE,
-      medianGrowth: medianGrowth ?? null,
+      medianForwardPE: snapshotPE ?? medianPE ?? industrySnapshot.medianForwardPE,
+      medianGrowth: null,
       medianROE: medianROE ?? null,
       medianROIC: medianROIC ?? null,
       medianDebt: medianDebt ?? null,
@@ -296,9 +296,7 @@ export async function runIndustryComparison(symbol: string): Promise<IndustryCom
       sector
     };
 
-    if (medianGrowth != null && stockGrowth != null) {
-      stockVsIndustry.growthVsMedianPct = medianGrowth === 0 ? (stockGrowth > 0 ? 100 : 0) : Math.round(((stockGrowth - medianGrowth) / Math.abs(medianGrowth)) * 10000) / 100;
-    }
+    // growthVsMedianPct: not computed (peer median for growth not used)
     if (medianROE != null && stockROE != null) {
       stockVsIndustry.roeVsMedianPct = medianROE === 0 ? (stockROE > 0 ? 100 : 0) : Math.round(((stockROE - medianROE) / Math.abs(medianROE)) * 10000) / 100;
     }
@@ -314,8 +312,9 @@ export async function runIndustryComparison(symbol: string): Promise<IndustryCom
       stockVsIndustry.debtVsMedian = stockDebt <= 0.3 ? 'Well below industry median' : stockDebt <= 0.8 ? 'Below industry median' : 'Unknown';
     }
 
-    if (medianPE != null && medianPE > 0 && stockPE != null && stockPE > 0) {
-      stockVsIndustry.valuationPremiumPct = Math.round(((stockPE - medianPE) / medianPE) * 10000) / 100;
+    const benchmarkPE = snapshotPE ?? medianPE;
+    if (benchmarkPE != null && benchmarkPE > 0 && stockPE != null && stockPE > 0) {
+      stockVsIndustry.valuationPremiumPct = Math.round(((stockPE - benchmarkPE) / benchmarkPE) * 10000) / 100;
     }
   } else {
     // No peers: use sector/industry average PE if available
@@ -326,7 +325,6 @@ export async function runIndustryComparison(symbol: string): Promise<IndustryCom
   }
 
   const premium = stockVsIndustry.valuationPremiumPct ?? 0;
-  const growthAbove = (stockVsIndustry.growthVsMedianPct ?? 0) > 10;
   const roeAbove = (stockVsIndustry.roeVsMedianPct ?? 0) > 10;
   const debtOk =
     stockVsIndustry.debtVsMedian !== 'Above industry median' &&
@@ -335,18 +333,18 @@ export async function runIndustryComparison(symbol: string): Promise<IndustryCom
   let verdict: Verdict = 'Fair';
   let verdictReason: string;
 
-  if (premium > 20 && !growthAbove && !roeAbove) {
+  if (premium > 20 && !roeAbove) {
     verdict = 'Premium stretched';
-    verdictReason = `Valuation is ${premium.toFixed(0)}% above industry median but growth and ROE are not meaningfully above peers.`;
-  } else if (premium > 20 && (growthAbove || roeAbove) && debtOk) {
+    verdictReason = `Valuation is ${premium.toFixed(0)}% above industry median but ROE is not meaningfully above peers.`;
+  } else if (premium > 20 && roeAbove && debtOk) {
     verdict = 'Premium justified';
-    verdictReason = `Valuation premium (${premium.toFixed(0)}%) is supported by superior growth and/or ROE vs industry and solid balance sheet.`;
+    verdictReason = `Valuation premium (${premium.toFixed(0)}%) is supported by superior ROE vs industry and solid balance sheet.`;
   } else if (premium <= -20) {
     verdict = 'Discount';
     verdictReason = `Trading at ${Math.abs(premium).toFixed(0)}% below industry median valuation.`;
-  } else if (premium > 15 && (growthAbove || roeAbove)) {
+  } else if (premium > 15 && roeAbove) {
     verdict = 'Premium justified';
-    verdictReason = `Moderate premium (${premium.toFixed(0)}%) with growth or quality above industry.`;
+    verdictReason = `Moderate premium (${premium.toFixed(0)}%) with quality above industry.`;
   } else {
     verdict = 'Fair';
     const absPct = Math.abs(premium).toFixed(0);

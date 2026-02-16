@@ -122,6 +122,82 @@ Respond with valid JSON only: {"title":"...","content":"..."}`;
   }
 }
 
+/** Fallback news card when LLM is unavailable or fails: storyline + headlines. */
+function formatNewsAsCard(symbol: string, storyline: string, headlines: Array<{ title: string; sentiment: string }>): GeneratedCard {
+  const headlineList = headlines.length
+    ? headlines.slice(0, 8).map((h) => `- ${h.title} (${h.sentiment})`).join('\n')
+    : '';
+  const content = headlineList
+    ? `**What's going on** — ${storyline}\n\n**Headlines**\n${headlineList}`
+    : `**What's going on** — ${storyline}`;
+  return {
+    title: `${symbol} — Recent news`,
+    content
+  };
+}
+
+/**
+ * Generate a news card for a holding: fetches news via getNewsUpdate, then LLM-generated title/content
+ * (same pattern as earnings recap card). Returns fallback card if no LLM or parse failure.
+ */
+export async function generateNewsCard(symbol: string): Promise<GeneratedCard | null> {
+  let newsUpdate: { storyline: string; headlines: Array<{ title: string; sentiment: string }> };
+  try {
+    const raw = await getNewsUpdate({ symbol: symbol.toUpperCase(), limit: 12 });
+    if (!raw.storyline && (!raw.headlines || raw.headlines.length === 0)) {
+      return null;
+    }
+    newsUpdate = {
+      storyline: raw.storyline || 'No narrative summary available.',
+      headlines: raw.headlines.map((h) => ({ title: h.title, sentiment: h.sentiment }))
+    };
+  } catch {
+    return null;
+  }
+
+  const data = JSON.stringify(
+    {
+      symbol: symbol.toUpperCase(),
+      storyline: newsUpdate.storyline,
+      headlines: newsUpdate.headlines.slice(0, 10).map((h) => ({ title: h.title, sentiment: h.sentiment }))
+    },
+    null,
+    2
+  );
+
+  if (OPENAI_KEY) {
+    const prompt = `You are the Rabbit: a brutally honest advisor. Calm and insightful, but you do not sugarcoat or default to optimism. If the news is negative or mixed, say so clearly. Tell the story behind the headlines. Use ONLY the structured data below. No invented facts.
+
+Your job is to TELL THE STORY and INTERPRET THE MEANING: what is going on with this company in the news, and why might it matter to an investor? Be conversational. Do not repeat the same point in different words. Do NOT use ### headings; use **bold** for section headings only. Invent section headings that fit this story. Do not use em dashes in the title or content; use colons, commas, or short sentences instead.
+
+Output format (strict):
+1. title: A creative, dynamic headline that captures the news story. Full creative freedom.
+2. content: Markdown with **bold** section headings only. Elaborative (2 to 4 sentences per section).
+
+Structured data:
+${data}
+
+Respond with valid JSON only: {"title":"...","content":"..."}`;
+
+    try {
+      const openai = new OpenAI({ apiKey: OPENAI_KEY });
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }]
+      });
+      const text = (completion.choices[0]?.message?.content || '').trim();
+      const parsed = JSON.parse(text.replace(/```json\n?|\n?```/g, '').trim()) as { title?: string; content?: string };
+      if (parsed?.title && parsed?.content) {
+        return { title: parsed.title, content: parsed.content };
+      }
+    } catch {
+      // fall through to fallback
+    }
+  }
+
+  return formatNewsAsCard(symbol.toUpperCase(), newsUpdate.storyline, newsUpdate.headlines);
+}
+
 /** Generate earnings recap card from structured data (no hardcoded templates). */
 export async function generateEarningsRecapCard(recap: EarningsRecap): Promise<GeneratedCard | null> {
   if (!OPENAI_KEY) return null;

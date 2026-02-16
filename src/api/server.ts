@@ -18,7 +18,7 @@ import { generateDominantSignalFeed } from '../services/dominantSignalFeed';
 import { generateRetailFeed } from '../services/retailFeed';
 import { getEarningsRecap, earningsRecapRelevance } from '../services/earningsRecap';
 import { formatEarningsRecap, formatEarningsRecapAsCard } from '../formatters/earningsRecapFormatter';
-import { generateEarningsRecapCard } from '../services/feedCardGenerator';
+import { generateEarningsRecapCard, generateNewsCard } from '../services/feedCardGenerator';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -603,6 +603,84 @@ app.get('/api/earnings-recap-feed/:ticker', async (req: Request, res: Response) 
 });
 
 // ============================================================================
+// NEWS FEED - Same response shape as feed / earnings-recap-feed (marketMood, cards, allStable, timestamp)
+// For iOS holding: one card per ticker with LLM-generated news story.
+// GET  /api/news-feed/:ticker
+// POST /api/news-feed (body: { ticker })
+// ============================================================================
+app.get('/api/news-feed/:ticker', async (req: Request, res: Response) => {
+  try {
+    const raw = req.params.ticker;
+    const ticker = (Array.isArray(raw) ? raw[0] : raw || '').toString().toUpperCase();
+    if (!/^[A-Za-z]{1,5}$/.test(ticker)) {
+      return res.status(400).json({ error: 'Invalid ticker symbol' });
+    }
+    const cardContent = await generateNewsCard(ticker);
+    if (!cardContent) {
+      return res.json({
+        success: true,
+        marketMood: 'No recent news available for this symbol.',
+        cards: [],
+        allStable: true,
+        timestamp: new Date().toISOString()
+      });
+    }
+    const card = {
+      symbol: ticker,
+      headline: cardContent.title,
+      title: cardContent.title,
+      content: cardContent.content
+    };
+    res.json({
+      success: true,
+      marketMood: 'Recent news for this holding.',
+      cards: [card],
+      allStable: false,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error('[NEWS-FEED ERROR]', err.message);
+    res.status(500).json({ error: `News feed failed: ${err.message}` });
+  }
+});
+
+app.post('/api/news-feed', async (req: Request, res: Response) => {
+  try {
+    const { ticker } = req.body;
+    const symbol = ticker && typeof ticker === 'string' ? ticker.trim().toUpperCase() : '';
+    if (!symbol || !/^[A-Za-z]{1,5}$/.test(symbol)) {
+      return res.status(400).json({ error: 'Missing or invalid "ticker" in body' });
+    }
+    const cardContent = await generateNewsCard(symbol);
+    if (!cardContent) {
+      return res.json({
+        success: true,
+        marketMood: 'No recent news available for this symbol.',
+        cards: [],
+        allStable: true,
+        timestamp: new Date().toISOString()
+      });
+    }
+    const card = {
+      symbol,
+      headline: cardContent.title,
+      title: cardContent.title,
+      content: cardContent.content
+    };
+    res.json({
+      success: true,
+      marketMood: 'Recent news for this holding.',
+      cards: [card],
+      allStable: false,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error('[NEWS-FEED ERROR]', err.message);
+    res.status(500).json({ error: `News feed failed: ${err.message}` });
+  }
+});
+
+// ============================================================================
 // NEWS ENDPOINT - News for a specific ticker
 // ============================================================================
 app.get('/api/news/:ticker', async (req: Request, res: Response) => {
@@ -690,6 +768,8 @@ app.listen(PORT, () => {
   console.log(`   GET    /api/checkup/:ticker      - Deep dive stock analysis`);
   console.log(`   POST   /api/holding-checkup       - App proxy (ticker, type?, name?)`);
   console.log(`   GET    /api/news/:ticker         - News for a specific stock`);
+  console.log(`   GET    /api/news-feed/:ticker    - News card in feed shape (marketMood, cards, allStable)`);
+  console.log(`   POST   /api/news-feed           - iOS (body: { ticker })`);
   console.log(`   GET    /api/snapshot/:ticker     - Stock snapshot (vs S&P 500, valuation, fundamentals)`);
   console.log(`   POST   /api/snapshot             - iOS app (body: { ticker, type? })`);
   console.log(`   GET    /api/industry-comparison/:ticker - Industry comparison (snapshot, vs industry, verdict)`);
